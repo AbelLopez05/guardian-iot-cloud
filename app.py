@@ -541,7 +541,7 @@ def home():
 def recibir_datos():
     """Endpoint principal para recibir datos del ESP32"""
     try:
-        data = request.json
+        data = request.get_json(force=True, silent=True)
         if not data:
             return jsonify({"error": "Sin datos JSON"}), 400
         
