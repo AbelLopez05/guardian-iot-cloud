@@ -1,0 +1,1851 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guardian IoT - Data Center Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body { 
+            font-family: 'Segoe UI', 'Courier New', monospace; 
+            background: linear-gradient(135deg, #0d1117 0%, #1a1f2e 100%);
+            color: #c9d1d9; 
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: rgba(22, 27, 34, 0.8);
+            border-radius: 12px;
+            border: 1px solid #30363d;
+        }
+
+        h1 { 
+            color: #58a6ff; 
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 0 0 20px rgba(88, 166, 255, 0.5);
+        }
+
+        .status-bar {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+        }
+
+        .status-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .badge-online { 
+            background: #238636; 
+            color: white;
+            box-shadow: 0 0 15px rgba(35, 134, 54, 0.5);
+        }
+
+        .badge-offline { 
+            background: #da3633; 
+            color: white;
+            box-shadow: 0 0 15px rgba(218, 54, 51, 0.5);
+            animation: pulse 2s infinite;
+        }
+
+        .badge-info {
+            background: #1f6feb;
+            color: white;
+        }
+
+        .badge-auto {
+            background: #238636;
+            color: white;
+            box-shadow: 0 0 15px rgba(35, 134, 54, 0.5);
+        }
+
+        .badge-manual {
+            background: #d29922;
+            color: white;
+            box-shadow: 0 0 15px rgba(210, 153, 34, 0.7);
+        }
+
+        .badge-auth {
+            background: #8250df;
+            color: white;
+            box-shadow: 0 0 15px rgba(130, 80, 223, 0.5);
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .badge-auth:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 25px rgba(130, 80, 223, 0.8);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .section-title {
+            color: #8b949e;
+            text-transform: uppercase;
+            font-size: 1.2em;
+            margin: 30px 0 15px 0;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #30363d;
+            letter-spacing: 2px;
+        }
+
+        .grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); 
+            gap: 20px; 
+            margin-bottom: 30px;
+        }
+
+        .card { 
+            background: linear-gradient(145deg, #161b22 0%, #0d1117 100%);
+            border: 1px solid #30363d; 
+            border-radius: 12px; 
+            padding: 25px; 
+            box-shadow: 0 8px 16px rgba(0,0,0,0.4);
+            transition: transform 0.3s, box-shadow 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #58a6ff, #1f6feb);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 24px rgba(0,0,0,0.6);
+        }
+
+        .card:hover::before {
+            opacity: 1;
+        }
+
+        .lbl { 
+            color: #8b949e; 
+            font-size: 0.85em; 
+            text-transform: uppercase; 
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .val { 
+            font-size: 3.5em; 
+            font-weight: bold; 
+            margin: 15px 0;
+            background: linear-gradient(135deg, #58a6ff, #1f6feb);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .unit {
+            font-size: 0.5em;
+            color: #8b949e;
+        }
+
+        /* === PANEL DE CONTROL === */
+        .control-panel {
+            background: linear-gradient(145deg, #161b22 0%, #0d1117 100%);
+            border: 2px solid #388bfd;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 0 30px rgba(56, 139, 253, 0.3);
+        }
+
+        .mode-switch-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: rgba(22, 27, 34, 0.6);
+            border-radius: 10px;
+        }
+
+        .mode-label {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #c9d1d9;
+        }
+
+        /* Switch Toggle */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 80px;
+            height: 40px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #238636;
+            transition: .4s;
+            border-radius: 40px;
+            box-shadow: 0 0 15px rgba(35, 134, 54, 0.5);
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 32px;
+            width: 32px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: #d29922;
+            box-shadow: 0 0 15px rgba(210, 153, 34, 0.7);
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(40px);
+        }
+
+        /* Controles manuales */
+        .manual-controls {
+            display: none;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            padding: 20px;
+            background: rgba(22, 27, 34, 0.4);
+            border-radius: 10px;
+            border: 1px solid #30363d;
+        }
+
+        .manual-controls.active {
+            display: grid;
+        }
+
+        .relay-control {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 15px;
+            background: linear-gradient(145deg, #21262d, #161b22);
+            border-radius: 8px;
+            border: 1px solid #30363d;
+        }
+
+        .relay-control-label {
+            color: #8b949e;
+            font-size: 0.9em;
+            text-align: center;
+        }
+
+        .btn-relay {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 1em;
+            text-transform: uppercase;
+        }
+
+        .btn-relay-off {
+            background: linear-gradient(145deg, #21262d, #161b22);
+            color: #8b949e;
+            border: 2px solid #30363d;
+        }
+
+        .btn-relay-off:hover {
+            border-color: #58a6ff;
+            color: #58a6ff;
+        }
+
+        .btn-relay-on {
+            background: linear-gradient(145deg, #238636, #2ea043);
+            color: white;
+            box-shadow: 0 0 15px rgba(35, 134, 54, 0.5);
+        }
+
+        .btn-relay-on:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 25px rgba(35, 134, 54, 0.8);
+        }
+
+        /* === MODAL DE LOGIN === */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(5px);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            animation: fadeIn 0.3s;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .modal-login {
+            background: linear-gradient(145deg, #161b22 0%, #0d1117 100%);
+            border: 2px solid #8250df;
+            border-radius: 16px;
+            padding: 40px;
+            width: 90%;
+            max-width: 450px;
+            box-shadow: 0 0 50px rgba(130, 80, 223, 0.5);
+            animation: slideDown 0.3s;
+        }
+
+        @keyframes slideDown {
+            from { 
+                opacity: 0;
+                transform: translateY(-50px);
+            }
+            to { 
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .modal-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .modal-header h2 {
+            color: #8250df;
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .modal-header p {
+            color: #8b949e;
+            font-size: 0.95em;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-group label {
+            display: block;
+            color: #c9d1d9;
+            font-weight: bold;
+            margin-bottom: 8px;
+            font-size: 0.95em;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 14px;
+            background: #0d1117;
+            border: 2px solid #30363d;
+            border-radius: 8px;
+            color: #c9d1d9;
+            font-size: 1em;
+            transition: all 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #8250df;
+            box-shadow: 0 0 15px rgba(130, 80, 223, 0.3);
+        }
+
+        .form-group input::placeholder {
+            color: #484f58;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+        }
+
+        .btn-modal {
+            flex: 1;
+            padding: 14px;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-transform: uppercase;
+        }
+
+        .btn-login {
+            background: linear-gradient(145deg, #8250df, #6e40c9);
+            color: white;
+            box-shadow: 0 0 15px rgba(130, 80, 223, 0.5);
+        }
+
+        .btn-login:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 0 25px rgba(130, 80, 223, 0.8);
+        }
+
+        .btn-login:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-cancel {
+            background: #21262d;
+            color: #8b949e;
+            border: 2px solid #30363d;
+        }
+
+        .btn-cancel:hover {
+            border-color: #58a6ff;
+            color: #58a6ff;
+        }
+
+        .error-message {
+            background: #da3633;
+            color: white;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+            display: none;
+            animation: shake 0.5s;
+        }
+
+        .error-message.active {
+            display: block;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-10px); }
+            75% { transform: translateX(10px); }
+        }
+
+        /* Estilos para relays */
+        .relay-status { 
+            padding: 15px; 
+            border-radius: 8px; 
+            font-weight: bold; 
+            margin-top: 10px; 
+            text-align: center;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+
+        .relay-off { 
+            background: linear-gradient(145deg, #21262d, #161b22);
+            color: #484f58; 
+            border-color: #30363d;
+        }
+
+        .relay-fan-on { 
+            background: linear-gradient(145deg, #238636, #1a6d2b);
+            color: white;
+            box-shadow: 0 0 20px rgba(35, 134, 54, 0.6);
+            border-color: #2ea043;
+        }
+
+        .relay-alarm-on { 
+            background: linear-gradient(145deg, #da3633, #b32e2b);
+            color: white;
+            box-shadow: 0 0 25px rgba(218, 54, 51, 0.8);
+            border-color: #f85149;
+            animation: blink 1s infinite;
+        }
+
+        .relay-light-hall-on { 
+            background: linear-gradient(145deg, #f0b429, #e09b11);
+            color: white;
+            box-shadow: 0 0 25px rgba(240, 180, 41, 0.7);
+            border-color: #fbbf24;
+            animation: glow-soft 2s ease-in-out infinite;
+        }
+
+        .relay-light-rack-on { 
+            background: linear-gradient(145deg, #fbbf24, #f59e0b);
+            color: white;
+            box-shadow: 0 0 30px rgba(251, 191, 36, 0.8);
+            border-color: #fbbf24;
+            animation: glow-bright 1.5s ease-in-out infinite;
+        }
+
+        @keyframes glow-soft {
+            0%, 100% { box-shadow: 0 0 25px rgba(240, 180, 41, 0.7); }
+            50% { box-shadow: 0 0 35px rgba(240, 180, 41, 0.9); }
+        }
+
+        @keyframes glow-bright {
+            0%, 100% { box-shadow: 0 0 30px rgba(251, 191, 36, 0.8); }
+            50% { box-shadow: 0 0 45px rgba(251, 191, 36, 1); }
+        }
+
+        @keyframes blink { 
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; } 
+        }
+
+        .relay-icon {
+            font-size: 1.5em;
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        .temp-indicator {
+            width: 100%;
+            height: 8px;
+            background: #21262d;
+            border-radius: 4px;
+            margin-top: 15px;
+            overflow: hidden;
+        }
+
+        .temp-bar {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s, background 0.5s;
+        }
+
+        .temp-normal { background: linear-gradient(90deg, #238636, #2ea043); }
+        .temp-warning { background: linear-gradient(90deg, #d29922, #e3b341); }
+        .temp-critical { background: linear-gradient(90deg, #da3633, #f85149); }
+
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding: 20px;
+            color: #484f58;
+            font-size: 0.85em;
+        }
+
+        .alert-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            background: #fef3c7;
+            color: #92400e;
+            border-radius: 12px;
+            font-size: 0.85em;
+            margin: 5px;
+            border: 1px solid #d97706;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid #8b949e;
+            border-top-color: #58a6ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* === ESTILOS PARA GRÁFICOS === */
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin: 20px 0;
+        }
+
+        .chart-card {
+            background: linear-gradient(145deg, #161b22 0%, #0d1117 100%);
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+        }
+
+        .btn-download {
+            padding: 12px 24px;
+            background: linear-gradient(145deg, #238636, #2ea043);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 1em;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 0 15px rgba(35, 134, 54, 0.5);
+        }
+
+        .btn-download:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 0 25px rgba(35, 134, 54, 0.8);
+        }
+
+        .btn-download:active {
+            transform: translateY(0);
+        }
+
+        @media (max-width: 768px) {
+            h1 { font-size: 1.8em; }
+            .val { font-size: 2.5em; }
+            .grid { grid-template-columns: 1fr; }
+            .mode-switch-container { flex-direction: column; }
+            .chart-container { height: 250px; }
+            .modal-login { padding: 25px; }
+        }
+    </style>
+</head>
+<body>
+    <!-- MODAL DE LOGIN -->
+    <div id="loginModal" class="modal-overlay">
+        <div class="modal-login">
+            <div class="modal-header">
+                <h2>🔐 Acceso Administrativo</h2>
+                <p>Ingresa tus credenciales para activar el modo manual</p>
+            </div>
+            
+            <div id="loginError" class="error-message">
+                ⚠️ Credenciales incorrectas. Intenta nuevamente.
+            </div>
+            
+            <form id="loginForm" onsubmit="return false;">
+                <div class="form-group">
+                    <label for="username">👤 Usuario</label>
+                    <input type="text" id="username" placeholder="Ingresa tu usuario" autocomplete="username" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="password">🔑 Contraseña</label>
+                    <input type="password" id="password" placeholder="Ingresa tu contraseña" autocomplete="current-password" required>
+                </div>
+                
+                <div class="modal-buttons">
+                    <button type="button" class="btn-modal btn-cancel" onclick="cancelarLogin()">Cancelar</button>
+                    <button type="submit" class="btn-modal btn-login" id="btnLogin">Iniciar Sesión</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>🛡️ GUARDIAN IoT</h1>
+            <p style="color: #8b949e; font-size: 1.1em;">Sistema de Monitoreo y Control en Tiempo Real</p>
+            
+            <div class="status-bar">
+                <div id="connection-badge" class="status-badge badge-offline">
+                    <span class="loading"></span>
+                    <span>Conectando...</span>
+                </div>
+                <div id="mode-badge" class="status-badge badge-auto">
+                    🤖 MODO AUTO
+                </div>
+                <div id="auth-badge" class="status-badge badge-auth" onclick="cerrarSesion()" style="display: none;">
+                    👤 ADMIN ACTIVO - Click para salir
+                </div>
+                <div class="status-badge badge-info" id="last-update">
+                    ⏱️ Sincronizando...
+                </div>
+            </div>
+        </div>
+
+        <!-- PANEL DE CONTROL MANUAL/AUTOMÁTICO -->
+        <div class="control-panel">
+            <h2 class="section-title" style="margin-top: 0;">🎛️ Panel de Control del Sistema</h2>
+            
+            <div class="mode-switch-container">
+                <span class="mode-label">🤖 AUTOMÁTICO</span>
+                <label class="switch">
+                    <input type="checkbox" id="modeSwitch" onchange="cambiarModo()">
+                    <span class="slider"></span>
+                </label>
+                <span class="mode-label">🎮 MANUAL</span>
+            </div>
+
+            <!-- Controles Manuales (ocultos por defecto) -->
+            <div id="manualControls" class="manual-controls">
+                <div class="relay-control">
+                    <div class="relay-control-label">❄️ VENTILADOR</div>
+                    <button id="btnRelay1" class="btn-relay btn-relay-off" onclick="toggleRelay(1)">OFF</button>
+                </div>
+                <div class="relay-control">
+                    <div class="relay-control-label">🚨 ALARMA</div>
+                    <button id="btnRelay2" class="btn-relay btn-relay-off" onclick="toggleRelay(2)">OFF</button>
+                </div>
+                <div class="relay-control">
+                    <div class="relay-control-label">💡 LUZ PASILLO (A)</div>
+                    <button id="btnRelay3" class="btn-relay btn-relay-off" onclick="toggleRelay(3)">OFF</button>
+                </div>
+                <div class="relay-control">
+                    <div class="relay-control-label">🔦 LUZ RACKS (B)</div>
+                    <button id="btnRelay4" class="btn-relay btn-relay-off" onclick="toggleRelay(4)">OFF</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sección de Sensores -->
+        <h2 class="section-title">📊 Telemetría en Tiempo Real</h2>
+        <div class="grid">
+            <div class="card">
+                <div class="lbl">🌡️ Temperatura del Servidor</div>
+                <div class="val">
+                    <span id="temp">--</span><span class="unit">°C</span>
+                </div>
+                <div class="temp-indicator">
+                    <div id="temp-bar" class="temp-bar temp-normal" style="width: 0%"></div>
+                </div>
+                <div style="margin-top: 10px; font-size: 0.85em; color: #8b949e;">
+                    Umbral Alerta: 28°C | Crítico: 31°C
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">💧 Humedad Relativa</div>
+                <div class="val">
+                    <span id="hum">--</span><span class="unit">%</span>
+                </div>
+                <div style="margin-top: 20px; font-size: 0.85em; color: #8b949e;">
+                    Rango Óptimo: 30% - 70% | LED Pasillo: ≥75%
+                </div>
+            </div>
+        </div>
+
+        <!-- KPIs DEL SISTEMA EXPERTO -->
+        <h2 class="section-title">📈 Indicadores Clave de Rendimiento (KPIs)</h2>
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
+            <div class="card">
+                <div class="lbl">🔺 TEMP MÁXIMA</div>
+                <div class="val" style="font-size: 2.5em;">
+                    <span id="kpi-temp-max">--</span><span class="unit">°C</span>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">🔻 TEMP MÍNIMA</div>
+                <div class="val" style="font-size: 2.5em;">
+                    <span id="kpi-temp-min">--</span><span class="unit">°C</span>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">📊 TEMP PROMEDIO</div>
+                <div class="val" style="font-size: 2.5em;">
+                    <span id="kpi-temp-avg">--</span><span class="unit">°C</span>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">💧 HUMEDAD PROMEDIO</div>
+                <div class="val" style="font-size: 2.5em;">
+                    <span id="kpi-hum-avg">--</span><span class="unit">%</span>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">⚠️ ALERTAS TOTALES</div>
+                <div class="val" style="font-size: 2.5em;">
+                    <span id="kpi-alertas">0</span>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">❄️ CICLOS VENTILADOR</div>
+                <div class="val" style="font-size: 2.5em;">
+                    <span id="kpi-ciclos">0</span>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">⏱️ UPTIME SISTEMA</div>
+                <div class="val" style="font-size: 1.8em;">
+                    <span id="kpi-uptime">00:00:00</span>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">📦 REGISTROS</div>
+                <div class="val" style="font-size: 2.5em;">
+                    <span id="kpi-registros">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ESTADÍSTICAS AVANZADAS -->
+        <h2 class="section-title">🎯 Análisis del Sistema Experto</h2>
+        <div class="grid">
+            <div class="card">
+                <div class="lbl">❄️ EFICIENCIA DE REFRIGERACIÓN</div>
+                <div class="val" style="font-size: 2.8em;">
+                    <span id="eficiencia-ventilador">--</span><span class="unit">%</span>
+                </div>
+                <div style="margin-top: 10px; font-size: 0.85em; color: #8b949e;">
+                    Tiempo con ventilador inactivo
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">🎚️ RANGO TÉRMICO SESIÓN</div>
+                <div class="val" style="font-size: 1.8em;">
+                    <span id="rango-termico">-- °C</span>
+                </div>
+                <div style="margin-top: 10px; font-size: 0.85em; color: #8b949e;">
+                    Variación máxima - mínima
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">💧 RANGO HUMEDAD SESIÓN</div>
+                <div class="val" style="font-size: 1.8em;">
+                    <span id="rango-humedad">-- %</span>
+                </div>
+                <div style="margin-top: 10px; font-size: 0.85em; color: #8b949e;">
+                    Variación máxima - mínima
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">🔋 ESTADO DEL SISTEMA</div>
+                <div class="val" style="font-size: 1.8em; color: #2ea043;">
+                    <span id="estado-sistema">OPERATIVO</span>
+                </div>
+                <div style="margin-top: 10px; font-size: 0.85em; color: #8b949e;">
+                    Diagnóstico en tiempo real
+                </div>
+            </div>
+        </div>
+
+        <!-- === PANEL DE RED NEURONAL === -->
+        <h2 class="section-title">🧠 Red Neuronal Predictiva - Análisis de IA</h2>
+        
+        <div class="control-panel" style="border-color: #8250df;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px;">
+                <div>
+                    <h3 style="color: #8250df; font-size: 1.5em; margin-bottom: 5px;">🤖 Sistema de Predicción Neural</h3>
+                    <p style="color: #8b949e; font-size: 0.9em;">Arquitectura: 16 → [64-32-16] → 1 | Optimizador: Adam</p>
+                </div>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="btn-download" style="background: linear-gradient(145deg, #8250df, #6e40c9);" onclick="entrenarRedNeuronal()">
+                        🧠 Entrenar Modelo
+                    </button>
+                    <button class="btn-download" style="background: linear-gradient(145deg, #1f6feb, #1a5ec9);" onclick="verAnalisisAvanzado()">
+                        📊 Análisis Avanzado
+                    </button>
+                </div>
+            </div>
+
+            <!-- Estado de la Red Neuronal -->
+            <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 20px;">
+                <div class="card">
+                    <div class="lbl">🎯 ACCURACY</div>
+                    <div class="val" style="font-size: 2.5em;">
+                        <span id="rna-accuracy">--</span><span class="unit">%</span>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="lbl">📉 ERROR (MSE)</div>
+                    <div class="val" style="font-size: 2.5em;">
+                        <span id="rna-mse">--</span>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="lbl">📈 R² SCORE</div>
+                    <div class="val" style="font-size: 2.5em;">
+                        <span id="rna-r2">--</span>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="lbl">🔮 PREDICCIÓN TEMP</div>
+                    <div class="val" style="font-size: 2.5em;">
+                        <span id="rna-prediccion">--</span><span class="unit">°C</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Visualización de Predicciones -->
+            <div class="chart-card" style="margin-bottom: 0;">
+                <h3 style="color: #8250df; font-size: 1.2em; margin-bottom: 15px;">🔮 Predicción de Temperatura (15 intervalos futuros)</h3>
+                <div class="chart-container">
+                    <canvas id="chartPredicciones"></canvas>
+                </div>
+            </div>
+
+            <!-- Recomendaciones de IA -->
+            <div id="rna-recomendaciones" style="display: none; margin-top: 20px;">
+                <h3 style="color: #8250df; font-size: 1.2em; margin-bottom: 15px;">💡 Recomendaciones Inteligentes</h3>
+                <div id="rna-recomendaciones-contenido" style="display: grid; gap: 10px;"></div>
+            </div>
+
+            <!-- Información del Modelo -->
+            <div style="margin-top: 20px; padding: 15px; background: rgba(22, 27, 34, 0.6); border-radius: 8px;">
+                <h4 style="color: #8b949e; font-size: 0.9em; margin-bottom: 10px;">ℹ️ Información del Modelo</h4>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; font-size: 0.85em; color: #8b949e;">
+                    <div>📦 Muestras: <span id="rna-muestras" style="color: #c9d1d9;">--</span></div>
+                    <div>🔄 Iteraciones: <span id="rna-iteraciones" style="color: #c9d1d9;">--</span></div>
+                    <div>⚙️ Parámetros: <span id="rna-parametros" style="color: #c9d1d9;">--</span></div>
+                    <div>⏱️ Tiempo: <span id="rna-tiempo" style="color: #c9d1d9;">--</span>s</div>
+                    <div>🎲 Estado: <span id="rna-estado" style="color: #da3633;">Sin entrenar</span></div>
+                </div>
+            </div>
+        </div>
+                <div class="val" style="font-size: 1.8em;">
+                    <span id="rango-termico">-- °C</span>
+                </div>
+                <div style="margin-top: 10px; font-size: 0.85em; color: #8b949e;">
+                    Variación máxima - mínima
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">💧 RANGO HUMEDAD SESIÓN</div>
+                <div class="val" style="font-size: 1.8em;">
+                    <span id="rango-humedad">-- %</span>
+                </div>
+                <div style="margin-top: 10px; font-size: 0.85em; color: #8b949e;">
+                    Variación máxima - mínima
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">🔋 ESTADO DEL SISTEMA</div>
+                <div class="val" style="font-size: 1.8em; color: #2ea043;">
+                    <span id="estado-sistema">OPERATIVO</span>
+                </div>
+                <div style="margin-top: 10px; font-size: 0.85em; color: #8b949e;">
+                    Diagnóstico en tiempo real
+                </div>
+            </div>
+        </div>
+
+        <!-- GRÁFICOS DE MONITOREO EN TIEMPO REAL -->
+        <h2 class="section-title">📉 Monitoreo Climático en Tiempo Real</h2>
+        
+        <div class="chart-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3 style="color: #58a6ff; font-size: 1.3em;">🌡️ Historial de Temperatura</h3>
+                <button class="btn-download" onclick="descargarReportePDF()">
+                    📄 Descargar Reporte PDF
+                </button>
+            </div>
+            <div class="chart-container">
+                <canvas id="chartTemperatura"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <h3 style="color: #58a6ff; font-size: 1.3em; margin-bottom: 20px;">💧 Historial de Humedad</h3>
+            <div class="chart-container">
+                <canvas id="chartHumedad"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <h3 style="color: #58a6ff; font-size: 1.3em; margin-bottom: 20px;">📊 Temperatura vs Humedad (Comparativa)</h3>
+            <div class="chart-container">
+                <canvas id="chartComparativo"></canvas>
+            </div>
+        </div>
+
+        <!-- Sección de Relays -->
+        <h2 class="section-title">🔌 Estado de Actuadores</h2>
+        <div class="grid">
+            <div class="card">
+                <div class="lbl">RELAY 1 - Sistema de Ventilación</div>
+                <div id="relay1" class="relay-status relay-off">
+                    <span class="relay-icon">❄️</span>
+                    STANDBY
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">RELAY 2 - Alarma Visual/Sonora</div>
+                <div id="relay2" class="relay-status relay-off">
+                    <span class="relay-icon">🚨</span>
+                    NORMAL
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">RELAY 3 - Iluminación Pasillo (Zona A)</div>
+                <div id="relay3" class="relay-status relay-off">
+                    <span class="relay-icon">💡</span>
+                    APAGADO
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="lbl">RELAY 4 - Iluminación Racks (Zona B)</div>
+                <div id="relay4" class="relay-status relay-off">
+                    <span class="relay-icon">🔦</span>
+                    APAGADO
+                </div>
+            </div>
+        </div>
+
+        <!-- Alertas -->
+        <div id="alerts-section" style="display: none;">
+            <h2 class="section-title">⚠️ Alertas Activas</h2>
+            <div id="alerts-container" style="text-align: center; padding: 20px;"></div>
+        </div>
+
+        <div class="footer">
+            <p><strong>Guardian IoT - Sistema BMS con Iluminación LED Inteligente</strong></p>
+            <p>ESP32 + DHT22 + Relay 4CH | Sistema Experto | Cloudflare Tunnel</p>
+            <p style="margin-top: 5px;">💡 Relay 3 (Pasillo): Activación automática ≥75% humedad | 🔦 Relay 4 (Racks): Emergencia</p>
+            <p style="margin-top: 5px; font-size: 0.75em; color: #484f58;">
+                Proyecto Final - Curso de Automatización Industrial | Fedora Server Backend
+            </p>
+        </div>
+    </div>
+
+    <script>
+        let errorConsecutivos = 0;
+        const MAX_ERRORES = 5;
+        let modoActual = 'AUTO';
+        let estadosManuales = {
+            relay1: false,
+            relay2: false,
+            relay3: false,
+            relay4: false
+        };
+        let adminAutenticado = false;
+
+        // === INICIALIZACIÓN DE GRÁFICOS ===
+        let chartTemperatura, chartHumedad, chartComparativo, chartPredicciones;
+
+        function inicializarGraficos() {
+            const configComun = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: { color: '#c9d1d9' }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: '#8b949e' },
+                        grid: { color: '#30363d' }
+                    },
+                    y: {
+                        ticks: { color: '#8b949e' },
+                        grid: { color: '#30363d' }
+                    }
+                }
+            };
+
+            // Gráfico de Temperatura
+            const ctxTemp = document.getElementById('chartTemperatura').getContext('2d');
+            chartTemperatura = new Chart(ctxTemp, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Temperatura (°C)',
+                        data: [],
+                        borderColor: '#58a6ff',
+                        backgroundColor: 'rgba(88, 166, 255, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: configComun
+            });
+
+            // Gráfico de Humedad
+            const ctxHum = document.getElementById('chartHumedad').getContext('2d');
+            chartHumedad = new Chart(ctxHum, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Humedad (%)',
+                        data: [],
+                        borderColor: '#2ea043',
+                        backgroundColor: 'rgba(46, 160, 67, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: configComun
+            });
+
+            // Gráfico Comparativo
+            const ctxComp = document.getElementById('chartComparativo').getContext('2d');
+            chartComparativo = new Chart(ctxComp, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Temperatura (°C)',
+                            data: [],
+                            borderColor: '#58a6ff',
+                            backgroundColor: 'rgba(88, 166, 255, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Humedad (%)',
+                            data: [],
+                            borderColor: '#2ea043',
+                            backgroundColor: 'rgba(46, 160, 67, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    ...configComun,
+                    scales: {
+                        x: {
+                            ticks: { color: '#8b949e' },
+                            grid: { color: '#30363d' }
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            ticks: { color: '#58a6ff' },
+                            grid: { color: '#30363d' },
+                            title: {
+                                display: true,
+                                text: 'Temperatura (°C)',
+                                color: '#58a6ff'
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            ticks: { color: '#2ea043' },
+                            grid: { drawOnChartArea: false },
+                            title: {
+                                display: true,
+                                text: 'Humedad (%)',
+                                color: '#2ea043'
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Gráfico de Predicciones de Red Neuronal
+            const ctxPred = document.getElementById('chartPredicciones').getContext('2d');
+            chartPredicciones = new Chart(ctxPred, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Temperatura Real',
+                            data: [],
+                            borderColor: '#58a6ff',
+                            backgroundColor: 'rgba(88, 166, 255, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.4,
+                            fill: false
+                        },
+                        {
+                            label: 'Predicción IA',
+                            data: [],
+                            borderColor: '#8250df',
+                            backgroundColor: 'rgba(130, 80, 223, 0.1)',
+                            borderWidth: 3,
+                            borderDash: [5, 5],
+                            tension: 0.4,
+                            fill: false,
+                            pointRadius: 4,
+                            pointBackgroundColor: '#8250df'
+                        }
+                    ]
+                },
+                options: {
+                    ...configComun,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#c9d1d9' }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.dataset.label || '';
+                                    if (label) {
+                                        label += ': ';
+                                    }
+                                    if (context.parsed.y !== null) {
+                                        label += context.parsed.y.toFixed(2) + '°C';
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function actualizarGraficos() {
+            fetch('/api/grafico-datos')
+                .then(response => response.json())
+                .then(data => {
+                    // Actualizar gráfico de temperatura
+                    chartTemperatura.data.labels = data.labels;
+                    chartTemperatura.data.datasets[0].data = data.temperatura;
+                    chartTemperatura.update('none');
+
+                    // Actualizar gráfico de humedad
+                    chartHumedad.data.labels = data.labels;
+                    chartHumedad.data.datasets[0].data = data.humedad;
+                    chartHumedad.update('none');
+
+                    // Actualizar gráfico comparativo
+                    chartComparativo.data.labels = data.labels;
+                    chartComparativo.data.datasets[0].data = data.temperatura;
+                    chartComparativo.data.datasets[1].data = data.humedad;
+                    chartComparativo.update('none');
+                })
+                .catch(err => console.error('Error actualizando gráficos:', err));
+        }
+
+        function descargarReportePDF() {
+            window.location.href = '/api/reporte/pdf';
+            console.log('📄 Descargando reporte PDF...');
+        }
+
+        // === FUNCIONES DE AUTENTICACIÓN ===
+        
+        function mostrarModalLogin() {
+            document.getElementById('loginModal').classList.add('active');
+            document.getElementById('username').focus();
+            document.getElementById('loginError').classList.remove('active');
+        }
+
+        function ocultarModalLogin() {
+            document.getElementById('loginModal').classList.remove('active');
+            document.getElementById('loginForm').reset();
+            document.getElementById('loginError').classList.remove('active');
+        }
+
+        function cancelarLogin() {
+            ocultarModalLogin();
+            // Revertir el switch a AUTO
+            document.getElementById('modeSwitch').checked = false;
+        }
+
+        async function intentarLogin(usuario, password) {
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ usuario, password })
+                });
+
+                const data = await response.json();
+
+                if (data.ok) {
+                    adminAutenticado = true;
+                    ocultarModalLogin();
+                    
+                    // Mostrar badge de admin
+                    document.getElementById('auth-badge').style.display = 'flex';
+                    
+                    // Ahora sí cambiar a modo MANUAL
+                    return await cambiarModoConAuth('MANUAL');
+                } else {
+                    document.getElementById('loginError').classList.add('active');
+                    return false;
+                }
+            } catch (error) {
+                console.error('Error en login:', error);
+                document.getElementById('loginError').classList.add('active');
+                return false;
+            }
+        }
+
+        async function cerrarSesion() {
+            if (!confirm('¿Deseas cerrar sesión de administrador?')) {
+                return;
+            }
+
+            try {
+                await fetch('/api/auth/logout', {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+
+                adminAutenticado = false;
+                document.getElementById('auth-badge').style.display = 'none';
+                
+                // Volver a modo AUTO
+                await cambiarModoConAuth('AUTO');
+                document.getElementById('modeSwitch').checked = false;
+                
+                console.log('✓ Sesión cerrada');
+            } catch (error) {
+                console.error('Error cerrando sesión:', error);
+            }
+        }
+
+        async function verificarSesionActiva() {
+            try {
+                const response = await fetch('/api/auth/verificar', {
+                    credentials: 'include'
+                });
+                const data = await response.json();
+                
+                if (data.autenticado) {
+                    adminAutenticado = true;
+                    document.getElementById('auth-badge').style.display = 'flex';
+                }
+            } catch (error) {
+                console.error('Error verificando sesión:', error);
+            }
+        }
+
+        // Manejar envío del formulario de login
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const usuario = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const btnLogin = document.getElementById('btnLogin');
+            
+            btnLogin.disabled = true;
+            btnLogin.textContent = 'Verificando...';
+            
+            await intentarLogin(usuario, password);
+            
+            btnLogin.disabled = false;
+            btnLogin.textContent = 'Iniciar Sesión';
+        });
+
+        // === FUNCIONES DE CONTROL DE MODO ===
+        
+        async function cambiarModo() {
+            const switchElement = document.getElementById('modeSwitch');
+            const nuevoModo = switchElement.checked ? 'MANUAL' : 'AUTO';
+            
+            // Si intenta cambiar a MANUAL sin autenticación, mostrar login
+            if (nuevoModo === 'MANUAL' && !adminAutenticado) {
+                switchElement.checked = false;
+                mostrarModalLogin();
+                return;
+            }
+            
+            // Si está autenticado o cambia a AUTO, proceder
+            await cambiarModoConAuth(nuevoModo);
+        }
+
+        async function cambiarModoConAuth(nuevoModo) {
+            try {
+                const response = await fetch('/api/modo', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ modo: nuevoModo })
+                });
+
+                const data = await response.json();
+
+                if (data.ok) {
+                    modoActual = nuevoModo;
+                    actualizarUIdelModo(nuevoModo);
+                    console.log(`✓ Modo cambiado a ${nuevoModo}`);
+                    return true;
+                } else if (data.requiere_auth) {
+                    // Si requiere autenticación, mostrar modal
+                    mostrarModalLogin();
+                    return false;
+                }
+            } catch (error) {
+                console.error('Error cambiando modo:', error);
+                document.getElementById('modeSwitch').checked = modoActual === 'MANUAL';
+                return false;
+            }
+        }
+
+        function actualizarUIdelModo(modo) {
+            const badge = document.getElementById('mode-badge');
+            const controls = document.getElementById('manualControls');
+            const switchElement = document.getElementById('modeSwitch');
+            
+            if (modo === 'MANUAL') {
+                badge.className = 'status-badge badge-manual';
+                badge.innerHTML = '🎮 MODO MANUAL';
+                controls.classList.add('active');
+                switchElement.checked = true;
+            } else {
+                badge.className = 'status-badge badge-auto';
+                badge.innerHTML = '🤖 MODO AUTO';
+                controls.classList.remove('active');
+                switchElement.checked = false;
+            }
+        }
+
+        // === CONTROL MANUAL DE RELAYS ===
+        async function toggleRelay(num) {
+            if (modoActual !== 'MANUAL') {
+                alert('⚠️ Cambia a modo MANUAL para controlar los relays');
+                return;
+            }
+
+            if (!adminAutenticado) {
+                alert('⚠️ Requiere autenticación de administrador');
+                mostrarModalLogin();
+                return;
+            }
+
+            const relay = `relay${num}`;
+            const nuevoEstado = !estadosManuales[relay];
+            
+            try {
+                const response = await fetch('/api/control', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ relay: relay, estado: nuevoEstado })
+                });
+
+                const data = await response.json();
+
+                if (data.ok) {
+                    estadosManuales[relay] = nuevoEstado;
+                    actualizarBotonRelay(num, nuevoEstado);
+                    console.log(`✓ ${relay} → ${nuevoEstado ? 'ON' : 'OFF'}`);
+                } else if (data.requiere_auth) {
+                    mostrarModalLogin();
+                }
+            } catch (error) {
+                console.error(`Error controlando ${relay}:`, error);
+            }
+        }
+
+        function actualizarBotonRelay(num, estado) {
+            const btn = document.getElementById(`btnRelay${num}`);
+            if (estado) {
+                btn.className = 'btn-relay btn-relay-on';
+                btn.textContent = 'ON';
+            } else {
+                btn.className = 'btn-relay btn-relay-off';
+                btn.textContent = 'OFF';
+            }
+        }
+
+        // === FUNCIONES DE ACTUALIZACIÓN ===
+        function actualizarTemperaturaBar(temp) {
+            const bar = document.getElementById('temp-bar');
+            const porcentaje = Math.min((temp / 40) * 100, 100);
+            bar.style.width = porcentaje + '%';
+
+            if (temp >= 31) {
+                bar.className = 'temp-bar temp-critical';
+            } else if (temp >= 28) {
+                bar.className = 'temp-bar temp-warning';
+            } else {
+                bar.className = 'temp-bar temp-normal';
+            }
+        }
+
+        function actualizarRelay(id, activo, textoActivo, claseActiva, icono, textoInactivo) {
+            const el = document.getElementById(id);
+            if (activo) {
+                el.className = 'relay-status ' + claseActiva;
+                el.innerHTML = `<span class="relay-icon">${icono}</span>${textoActivo}`;
+            } else {
+                el.className = 'relay-status relay-off';
+                el.innerHTML = `<span class="relay-icon">${icono}</span>${textoInactivo || 'STANDBY'}`;
+            }
+        }
+
+        function actualizarDashboard() {
+            fetch('/api/estado')
+                .then(response => {
+                    if (!response.ok) throw new Error('Error de red');
+                    return response.json();
+                })
+                .then(data => {
+                    errorConsecutivos = 0;
+
+                    // Actualizar modo
+                    if (data.modo !== modoActual) {
+                        modoActual = data.modo;
+                        actualizarUIdelModo(data.modo);
+                    }
+
+                    // Actualizar estados manuales si están en modo manual
+                    if (data.modo === 'MANUAL') {
+                        estadosManuales.relay1 = data.relay1;
+                        estadosManuales.relay2 = data.relay2;
+                        estadosManuales.relay3 = data.relay3;
+                        estadosManuales.relay4 = data.relay4;
+                        
+                        actualizarBotonRelay(1, data.relay1);
+                        actualizarBotonRelay(2, data.relay2);
+                        actualizarBotonRelay(3, data.relay3);
+                        actualizarBotonRelay(4, data.relay4);
+                    }
+
+                    // Badge de conexión
+                    const badge = document.getElementById('connection-badge');
+                    if (data.conectado) {
+                        badge.className = 'status-badge badge-online';
+                        badge.innerHTML = '<span style="font-size: 1.2em;">●</span> <span>En Línea</span>';
+                    } else {
+                        badge.className = 'status-badge badge-offline';
+                        badge.innerHTML = '<span style="font-size: 1.2em;">●</span> <span>ESP32 Desconectado</span>';
+                    }
+
+                    // Sensores
+                    document.getElementById('temp').textContent = data.temperatura.toFixed(1);
+                    document.getElementById('hum').textContent = data.humedad.toFixed(1);
+                    actualizarTemperaturaBar(data.temperatura);
+
+                    // Timestamp
+                    document.getElementById('last-update').innerHTML = 
+                        `⏱️ ${data.ultima_actualizacion || 'Esperando datos...'}`;
+
+                    // Relays
+                    actualizarRelay('relay1', data.relay1, '❄️ VENTILACIÓN ACTIVA', 'relay-fan-on', '❄️', 'STANDBY');
+                    actualizarRelay('relay2', data.relay2, '🚨 ALERTA CRÍTICA', 'relay-alarm-on', '🚨', 'NORMAL');
+                    actualizarRelay('relay3', data.relay3, '💡 LUZ PASILLO ENCENDIDA', 'relay-light-hall-on', '💡', 'APAGADO');
+                    actualizarRelay('relay4', data.relay4, '🔦 LUZ RACKS ENCENDIDA', 'relay-light-rack-on', '🔦', 'APAGADO');
+
+                    // Alertas
+                    const alertsSection = document.getElementById('alerts-section');
+                    const alertsContainer = document.getElementById('alerts-container');
+                    
+                    if (data.alertas_activas && data.alertas_activas.length > 0) {
+                        alertsSection.style.display = 'block';
+                        alertsContainer.innerHTML = data.alertas_activas
+                            .map(alerta => `<span class="alert-badge">${alerta}</span>`)
+                            .join('');
+                    } else {
+                        alertsSection.style.display = 'none';
+                    }
+                })
+                .catch(err => {
+                    console.error('Error conectando al servidor:', err);
+                    errorConsecutivos++;
+
+                    if (errorConsecutivos >= MAX_ERRORES) {
+                        const badge = document.getElementById('connection-badge');
+                        badge.className = 'status-badge badge-offline';
+                        badge.innerHTML = '<span>⚠️</span> <span>Servidor No Responde</span>';
+                    }
+                });
+        }
+
+        function actualizarKPIs() {
+            fetch('/api/kpis')
+                .then(response => response.json())
+                .then(kpis => {
+                    // KPIs de temperatura
+                    document.getElementById('kpi-temp-max').textContent = kpis.temp_max.toFixed(1);
+                    document.getElementById('kpi-temp-min').textContent = kpis.temp_min.toFixed(1);
+                    document.getElementById('kpi-temp-avg').textContent = kpis.temp_promedio.toFixed(1);
+                    document.getElementById('kpi-hum-avg').textContent = kpis.hum_promedio.toFixed(1);
+                    
+                    // KPIs operacionales
+                    document.getElementById('kpi-alertas').textContent = kpis.total_alertas;
+                    document.getElementById('kpi-ciclos').textContent = kpis.ciclos_ventilador;
+                    document.getElementById('kpi-uptime').textContent = kpis.uptime_formato;
+                    document.getElementById('kpi-registros').textContent = kpis.total_registros;
+                    
+                    // Eficiencia
+                    const eficiencia = 100 - kpis.porcentaje_ventilador;
+                    document.getElementById('eficiencia-ventilador').textContent = eficiencia.toFixed(1);
+                    
+                    // Rangos
+                    const rangoTermico = kpis.temp_max - kpis.temp_min;
+                    const rangoHumedad = kpis.hum_max - kpis.hum_min;
+                    document.getElementById('rango-termico').textContent = rangoTermico.toFixed(1) + ' °C';
+                    document.getElementById('rango-humedad').textContent = rangoHumedad.toFixed(1) + ' %';
+                    
+                    // Estado del sistema
+                    const estadoEl = document.getElementById('estado-sistema');
+                    if (kpis.temp_actual > 31) {
+                        estadoEl.textContent = 'CRÍTICO';
+                        estadoEl.style.color = '#da3633';
+                    } else if (kpis.temp_actual > 28) {
+                        estadoEl.textContent = 'ALERTA';
+                        estadoEl.style.color = '#d29922';
+                    } else {
+                        estadoEl.textContent = 'OPERATIVO';
+                        estadoEl.style.color = '#2ea043';
+                    }
+                })
+                .catch(err => console.error('Error obteniendo KPIs:', err));
+        }
+
+        // === FUNCIONES DE RED NEURONAL ===
+
+        async function entrenarRedNeuronal() {
+            if (!adminAutenticado) {
+                alert('⚠️ Requiere autenticación de administrador');
+                mostrarModalLogin();
+                return;
+            }
+
+            if (!confirm('¿Deseas entrenar la Red Neuronal con los datos actuales?\n\nEsto puede tardar unos segundos.')) {
+                return;
+            }
+
+            try {
+                console.log('🧠 Iniciando entrenamiento de Red Neuronal...');
+                
+                const response = await fetch('/api/rna/entrenar', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                const resultado = await response.json();
+
+                if (resultado.success) {
+                    alert(`✅ Red Neuronal entrenada exitosamente!\n\n` +
+                          `Accuracy: ${resultado.metricas.accuracy}%\n` +
+                          `R² Score: ${resultado.metricas.r2_score}\n` +
+                          `MSE: ${resultado.metricas.mse}\n` +
+                          `Muestras: ${resultado.metricas.muestras_entrenamiento}`);
+                    
+                    actualizarEstadoRedNeuronal();
+                    actualizarPredicciones();
+                } else {
+                    alert(`❌ Error: ${resultado.mensaje}`);
+                }
+            } catch (error) {
+                console.error('Error entrenando RNA:', error);
+                alert('❌ Error comunicándose con el servidor');
+            }
+        }
+
+        async function actualizarEstadoRedNeuronal() {
+            try {
+                const response = await fetch('/api/rna/estado');
+                const estado = await response.json();
+
+                if (estado.entrenado) {
+                    document.getElementById('rna-estado').textContent = 'Entrenado ✓';
+                    document.getElementById('rna-estado').style.color = '#2ea043';
+                    
+                    document.getElementById('rna-accuracy').textContent = estado.metricas.accuracy.toFixed(1);
+                    document.getElementById('rna-mse').textContent = estado.metricas.mse.toFixed(4);
+                    document.getElementById('rna-r2').textContent = estado.metricas.r2_score.toFixed(3);
+                    
+                    document.getElementById('rna-muestras').textContent = estado.metricas.muestras_entrenamiento || '--';
+                    document.getElementById('rna-iteraciones').textContent = estado.metricas.iteraciones || '--';
+                    document.getElementById('rna-parametros').textContent = estado.arquitectura.total_parametros || '--';
+                    document.getElementById('rna-tiempo').textContent = estado.metricas.tiempo_entrenamiento || '--';
+                } else {
+                    document.getElementById('rna-estado').textContent = 'Sin entrenar';
+                    document.getElementById('rna-estado').style.color = '#da3633';
+                }
+            } catch (error) {
+                console.error('Error actualizando estado RNA:', error);
+            }
+        }
+
+        async function actualizarPredicciones() {
+            try {
+                const response = await fetch('/api/rna/predecir');
+                const data = await response.json();
+
+                if (data.entrenado && data.prediccion_siguiente) {
+                    document.getElementById('rna-prediccion').textContent = data.prediccion_siguiente.toFixed(1);
+                    
+                    // Actualizar gráfico de predicciones
+                    if (data.predicciones_futuras && data.predicciones_futuras.length > 0) {
+                        const labelsPrediccion = data.predicciones_futuras.map((_, i) => `+${(i+1)*3}min`);
+                        
+                        // Datos reales (últimos registros)
+                        const response2 = await fetch('/api/grafico-datos');
+                        const datosReales = await response2.json();
+                        
+                        chartPredicciones.data.labels = [...datosReales.labels.slice(-10), ...labelsPrediccion];
+                        chartPredicciones.data.datasets[0].data = [...datosReales.temperatura.slice(-10), ...Array(data.predicciones_futuras.length).fill(null)];
+                        chartPredicciones.data.datasets[1].data = [...Array(10).fill(null), ...data.predicciones_futuras];
+                        chartPredicciones.update('none');
+                    }
+                } else {
+                    document.getElementById('rna-prediccion').textContent = '--';
+                }
+            } catch (error) {
+                console.error('Error actualizando predicciones:', error);
+            }
+        }
+
+        async function verAnalisisAvanzado() {
+            try {
+                const response = await fetch('/api/rna/analisis-avanzado');
+                const analisis = await response.json();
+
+                if (!analisis.entrenado) {
+                    alert('⚠️ La Red Neuronal no está entrenada.\n\nEntrena el modelo primero para ver el análisis avanzado.');
+                    return;
+                }
+
+                // Mostrar recomendaciones
+                const seccionRecom = document.getElementById('rna-recomendaciones');
+                const contenidoRecom = document.getElementById('rna-recomendaciones-contenido');
+                
+                if (analisis.recomendaciones && analisis.recomendaciones.length > 0) {
+                    seccionRecom.style.display = 'block';
+                    
+                    contenidoRecom.innerHTML = analisis.recomendaciones.map(rec => {
+                        let bgColor, borderColor, icon;
+                        if (rec.nivel === 'critico') {
+                            bgColor = 'rgba(218, 54, 51, 0.1)';
+                            borderColor = '#da3633';
+                            icon = '⚠️';
+                        } else if (rec.nivel === 'warning') {
+                            bgColor = 'rgba(210, 153, 34, 0.1)';
+                            borderColor = '#d29922';
+                            icon = '⚡';
+                        } else {
+                            bgColor = 'rgba(88, 166, 255, 0.1)';
+                            borderColor = '#58a6ff';
+                            icon = 'ℹ️';
+                        }
+                        
+                        return `
+                            <div style="background: ${bgColor}; border: 2px solid ${borderColor}; border-radius: 8px; padding: 15px;">
+                                <div style="font-weight: bold; color: ${borderColor}; margin-bottom: 5px;">
+                                    ${icon} ${rec.mensaje}
+                                </div>
+                                <div style="font-size: 0.9em; color: #8b949e;">
+                                    → ${rec.accion}
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                } else {
+                    seccionRecom.style.display = 'none';
+                }
+
+                // Mostrar análisis detallado
+                const mensajeAnalisis = `
+📊 ANÁLISIS AVANZADO DE IA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🌡️ PREDICCIÓN INMEDIATA
+   Temperatura próxima: ${analisis.prediccion_inmediata?.toFixed(1) || '--'}°C
+   Temperatura actual: ${analisis.analisis.temperatura_actual?.toFixed(1) || '--'}°C
+
+📈 TENDENCIA
+   Dirección: ${analisis.analisis.tendencia.toUpperCase()}
+   Delta: ${analisis.analisis.delta_temperatura?.toFixed(2) || '--'}°C
+   Temp. máxima predicha: ${analisis.analisis.temperatura_maxima_predicha?.toFixed(1) || '--'}°C
+
+⚠️ PROBABILIDAD DE ALERTA
+   ${analisis.analisis.probabilidad_alerta?.toFixed(1) || '--'}%
+
+🤖 MÉTRICAS DEL MODELO
+   Accuracy: ${analisis.metricas_modelo.accuracy?.toFixed(1) || '--'}%
+   R² Score: ${analisis.metricas_modelo.r2_score?.toFixed(4) || '--'}
+   MSE: ${analisis.metricas_modelo.mse?.toFixed(4) || '--'}
+
+📋 RECOMENDACIONES: ${analisis.recomendaciones.length || 0}
+                `;
+
+                alert(mensajeAnalisis);
+
+            } catch (error) {
+                console.error('Error obteniendo análisis:', error);
+                alert('❌ Error obteniendo análisis avanzado');
+            }
+        }
+
+        // === INICIALIZACIÓN ===
+        window.addEventListener('load', () => {
+            inicializarGraficos();
+            verificarSesionActiva();
+            actualizarDashboard();
+            actualizarKPIs();
+            actualizarGraficos();
+            actualizarEstadoRedNeuronal();
+            actualizarPredicciones();
+            
+            // Actualizar dashboard cada 2 segundos
+            setInterval(actualizarDashboard, 2000);
+            
+            // Actualizar KPIs cada 5 segundos
+            setInterval(actualizarKPIs, 5000);
+            
+            // Actualizar gráficos cada 5 segundos
+            setInterval(actualizarGraficos, 5000);
+            
+            // Actualizar predicciones RNA cada 10 segundos
+            setInterval(() => {
+                actualizarEstadoRedNeuronal();
+                actualizarPredicciones();
+            }, 10000);
+        });
+
+        console.log('%c🛡️ Guardian IoT Dashboard Iniciado', 'color: #58a6ff; font-size: 16px; font-weight: bold;');
+        console.log('%c🔐 Sistema de Autenticación Activo', 'color: #8250df; font-weight: bold;');
+        console.log('%c🧠 Red Neuronal Predictiva [16→64-32-16→1]', 'color: #8250df; font-weight: bold;');
+        console.log('%c💡 Sistema LED: Relay 3 ≥75% humedad | Relay 4: Emergencia', 'color: #fbbf24; font-weight: bold;');
+        console.log('%c📊 Dashboard con KPIs y Análisis del Sistema Experto', 'color: #2ea043; font-weight: bold;');
+        console.log('%c🎮 Control Manual/Automático con Protección Admin', 'color: #8b949e;');
+    </script>
+</body>
+</html>
