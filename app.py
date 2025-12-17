@@ -4,6 +4,7 @@ import datetime
 import random 
 import json
 import os
+import math
 from collections import deque
 import threading
 import time
@@ -1238,8 +1239,7 @@ def generar_datos_semilla():
         print(f"⚠️ Error entrenando IA: {resultado['mensaje']}")
 
 if __name__ == '__main__':
-    import math # Importación local por si acaso
-    
+        
     registrar_evento("SISTEMA", "Servidor iniciado en Fedora")
     
     # 1. Intentar cargar modelo guardado
