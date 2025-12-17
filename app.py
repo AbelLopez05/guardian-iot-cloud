@@ -538,13 +538,34 @@ def home():
         """
 
 @app.route('/api/telemetria', methods=['POST'])
+@app.route('/api/telemetria', methods=['POST'])
 def recibir_datos():
-    """Endpoint principal para recibir datos del ESP32"""
+    """Endpoint BLINDADO para recibir datos del ESP32"""
     try:
-        data = request.get_json(force=True, silent=True)
-        if not data:
-            return jsonify({"error": "Sin datos JSON"}), 400
+        # 1. IMPRIMIR LO QUE LLEGA (DIAGNÓSTICO)
+        # Esto nos mostrará en los logs de Render qué está llegando realmente
+        cuerpo_crudo = request.get_data(as_text=True)
+        print(f"📦 [DEBUG] BODY RECIBIDO: {cuerpo_crudo}")
         
+        # 2. INTENTO DE PARSEO MANUAL (Más fuerte que force=True)
+        import json
+        data = None
+        
+        if cuerpo_crudo:
+            try:
+                data = json.loads(cuerpo_crudo)
+            except Exception as e:
+                print(f"❌ [DEBUG] Error JSON: {str(e)}")
+        
+        # Si falló el manual, intentamos el de Flask por si acaso
+        if not data:
+            data = request.get_json(force=True, silent=True)
+
+        if not data:
+            print("⚠️ [DEBUG] No pude descifrar el JSON por ningún método")
+            return jsonify({"error": "Sin datos JSON", "recibido": cuerpo_crudo}), 400
+        
+        # --- AQUÍ SIGUE TU CÓDIGO NORMAL ---
         temp = float(data.get('t', 0))
         hum = float(data.get('h', 0))
         
@@ -561,25 +582,20 @@ def recibir_datos():
             if hum < estado_sistema['hum_min_sesion']:
                 estado_sistema['hum_min_sesion'] = hum
             
-            # === MODO AUTOMÁTICO: Usar motor de inferencia ===
+            # === MODO AUTOMÁTICO ===
             if modo_actual == "AUTO":
                 decision, alertas = motor_de_inferencia(temp, hum)
                 
-                # Contar ciclos de ventilador
+                # Contar ciclos
                 if decision['relay1'] and not estado_sistema['relay1']:
                     estado_sistema['ciclos_ventilador'] += 1
-                
-                # Contar alertas
                 if len(alertas) > 0:
                     estado_sistema['total_alertas'] += 1
                 
-                estado_sistema['relay1'] = decision['relay1']
-                estado_sistema['relay2'] = decision['relay2']
-                estado_sistema['relay3'] = decision['relay3']
-                estado_sistema['relay4'] = decision['relay4']
+                estado_sistema.update(decision)
                 estado_sistema['alertas_activas'] = alertas
-                
-            # === MODO MANUAL: Usar estados guardados ===
+            
+            # === MODO MANUAL ===
             else:
                 decision = {
                     'relay1': estado_sistema['manual_relay1'],
@@ -587,11 +603,7 @@ def recibir_datos():
                     'relay3': estado_sistema['manual_relay3'],
                     'relay4': estado_sistema['manual_relay4']
                 }
-                
-                estado_sistema['relay1'] = decision['relay1']
-                estado_sistema['relay2'] = decision['relay2']
-                estado_sistema['relay3'] = decision['relay3']
-                estado_sistema['relay4'] = decision['relay4']
+                estado_sistema.update(decision)
                 estado_sistema['alertas_activas'] = [f"🎮 Modo MANUAL activo"]
             
             # Actualizar datos comunes
@@ -613,12 +625,11 @@ def recibir_datos():
                 "modo": modo_actual
             })
         
-        print(f"✓ [{modo_actual}] T:{temp}°C H:{hum}% -> R1:{decision['relay1']} R2:{decision['relay2']} R3:{decision['relay3']} R4:{decision['relay4']}")
-        
+        print(f"✓ [{modo_actual}] T:{temp}°C H:{hum}% -> R1:{decision['relay1']}")
         return jsonify(decision)
         
     except Exception as e:
-        registrar_evento("ERROR", f"Error procesando telemetría: {str(e)}")
+        print(f"🔥 [ERROR CRÍTICO] {str(e)}")
         return jsonify({"error": "Error interno"}), 500
 
 @app.route('/api/estado', methods=['GET'])
