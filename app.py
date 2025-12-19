@@ -37,7 +37,7 @@ ADMIN_PASSWORD_HASH = hashlib.sha256("admin123".encode()).hexdigest()  # Cambiar
 UMBRAL_TEMP_ALERTA = 28.0
 UMBRAL_TEMP_CRITICA = 31.0
 UMBRAL_HUMEDAD_BAJA = 30.0
-UMBRAL_HUMEDAD_ALTA = 70.0
+UMBRAL_HUMEDAD_ALTA = 85.0
 
 # === GEMELO DIGITAL ===
 estado_sistema = {
@@ -391,7 +391,7 @@ def motor_de_inferencia(temp, hum):
         alertas.append(f"⚡ ALERTA: Temperatura {temp}°C")
         
     # === REGLAS DE HUMEDAD ===
-    if hum >= 75.0:
+    if hum >= 85.0:
         # 💡 Luz Pasillo ON cuando humedad alta (inspección necesaria)
         acciones["relay3"] = True
         alertas.append(f"💧 Humedad crítica: {hum}% - Iluminación pasillo activada")
