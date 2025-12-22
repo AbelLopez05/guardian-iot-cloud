@@ -27,14 +27,15 @@ app = Flask(__name__, static_folder='static')
 CORS(app, supports_credentials=True, origins=["*"])
 app.secret_key = secrets.token_hex(32)
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = False  # True solo para HTTPS
+app.config['SESSION_COOKIE_SECURE'] = False
 
 # === AUTENTICACIÓN ===
 ADMIN_USER = "admin"
 ADMIN_PASSWORD_HASH = hashlib.sha256("admin123".encode()).hexdigest()
 
-# === ARCHIVO DE CONFIGURACIÓN ===
+# === ARCHIVOS DE CONFIGURACIÓN ===
 CONFIG_FILE = "config_mlp.json"
+HORARIOS_FILE = "horarios_config.json"
 
 config_umbrales = {
     "usar_mlp": True,
@@ -43,6 +44,50 @@ config_umbrales = {
     "temp_critica": 31.0,
     "humedad_baja": 30.0,
     "humedad_alta": 85.0
+}
+
+# === CONFIGURACIÓN DE HORARIOS ===
+horarios_config = {
+    "relay1": {
+        "nombre": "Motor AC",
+        "habilitado": True,
+        "hora_inicio": 17.0,      # 17:00
+        "hora_fin": 17.33,        # 17:20
+        "temp_min": 15.0,
+        "temp_max": 18.0,
+        "hum_min": 80.0,
+        "hum_max": 90.0
+    },
+    "relay2": {
+        "nombre": "Foco 1",
+        "habilitado": True,
+        "hora_inicio": 17.5,      # 17:30
+        "hora_fin": 18.0,         # 18:00
+        "temp_min": 18.0,
+        "temp_max": 20.0,
+        "hum_min": 90.0,
+        "hum_max": 100.0
+    },
+    "relay3": {
+        "nombre": "Foco 2",
+        "habilitado": True,
+        "hora_inicio": 17.5,      # 17:30
+        "hora_fin": 18.0,         # 18:00
+        "temp_min": 20.0,
+        "temp_max": 25.0,
+        "hum_min": 80.0,
+        "hum_max": 90.0
+    },
+    "relay4": {
+        "nombre": "Reserva",
+        "habilitado": False,
+        "hora_inicio": 0.0,
+        "hora_fin": 0.0,
+        "temp_min": 0.0,
+        "temp_max": 100.0,
+        "hum_min": 0.0,
+        "hum_max": 100.0
+    }
 }
 
 def cargar_configuracion():
@@ -66,6 +111,31 @@ def guardar_configuracion():
         return True
     except Exception as e:
         print(f"❌ Error guardando configuración: {e}")
+        return False
+
+def cargar_horarios():
+    global horarios_config
+    try:
+        if os.path.exists(HORARIOS_FILE):
+            with open(HORARIOS_FILE, 'r') as f:
+                horarios_cargados = json.load(f)
+                horarios_config.update(horarios_cargados)
+            print(f"✅ Horarios cargados desde {HORARIOS_FILE}")
+            registrar_evento("CONFIG", "Horarios cargados exitosamente")
+        else:
+            guardar_horarios()
+    except Exception as e:
+        print(f"⚠️ Error cargando horarios: {e}")
+
+def guardar_horarios():
+    try:
+        with open(HORARIOS_FILE, 'w') as f:
+            json.dump(horarios_config, f, indent=4)
+        print(f"✅ Horarios guardados en {HORARIOS_FILE}")
+        registrar_evento("CONFIG", "Horarios guardados exitosamente")
+        return True
+    except Exception as e:
+        print(f"❌ Error guardando horarios: {e}")
         return False
 
 # === GEMELO DIGITAL ===
@@ -114,22 +184,6 @@ def registrar_evento(tipo, mensaje):
 # ========== RED NEURONAL MLP ==========
 
 class RedNeuronalMLP:
-    """
-    Red Neuronal Perceptrón Multicapa para Control de Relés
-    Arquitectura: [3] → [16-8] → [4]
-    
-    ENTRADAS (3):
-    - Temperatura (°C)
-    - Humedad (%)
-    - Hora (decimal 0-24)
-    
-    SALIDAS (4):
-    - Relay 1: Motor AC
-    - Relay 2: Foco 1
-    - Relay 3: Foco 2
-    - Relay 4: Reserva
-    """
-    
     def __init__(self):
         self.modelo = None
         self.scaler = MinMaxScaler()
@@ -145,11 +199,10 @@ class RedNeuronalMLP:
         self.inicializar_modelo()
     
     def inicializar_modelo(self):
-        """Crear arquitectura MLP"""
         self.modelo = MLPClassifier(
-            hidden_layer_sizes=(16, 8),  # 2 capas ocultas
-            activation='relu',            # Función de activación ReLU
-            solver='adam',                # Optimizador Adam
+            hidden_layer_sizes=(16, 8),
+            activation='relu',
+            solver='adam',
             max_iter=2000,
             random_state=42,
             learning_rate='adaptive',
@@ -162,38 +215,34 @@ class RedNeuronalMLP:
         registrar_evento("MLP", "Red neuronal MLP inicializada: [3] → [16-8] → [4]")
     
     def generar_dataset_entrenamiento(self):
-        """
-        Genera dataset sintético CORREGIDO (Listas numéricas, NO texto)
-        """
+        """Genera dataset usando la configuración actual de horarios"""
         X = []
         y = []
         
-        # CONDICIÓN 1: Motor AC (100 muestras)
-        for _ in range(100):
-            temp = np.random.uniform(15, 18)
-            hum = np.random.uniform(80, 90)
-            hora = np.random.uniform(17.0, 17.33)
-            X.append([temp, hum, hora])
-            y.append([1, 0, 0, 0])  # <--- CAMBIO: Números [1,0,0,0], NO String '1000'
+        # Generar datos para cada relay configurado
+        for relay_key in ['relay1', 'relay2', 'relay3', 'relay4']:
+            config = horarios_config[relay_key]
+            
+            if not config['habilitado']:
+                continue
+            
+            # Generar 100 muestras positivas para este relay
+            for _ in range(100):
+                temp = np.random.uniform(config['temp_min'], config['temp_max'])
+                hum = np.random.uniform(config['hum_min'], config['hum_max'])
+                hora = np.random.uniform(config['hora_inicio'], config['hora_fin'])
+                
+                X.append([temp, hum, hora])
+                
+                # Output: activar solo este relay
+                output = [0, 0, 0, 0]
+                relay_index = int(relay_key[-1]) - 1  # relay1 -> 0, relay2 -> 1, etc.
+                output[relay_index] = 1
+                y.append(output)
         
-        # CONDICIÓN 2: Foco 1 (100 muestras)
-        for _ in range(100):
-            temp = np.random.uniform(18, 20)
-            hum = np.random.uniform(90, 100)
-            hora = np.random.uniform(17.5, 18.0)
-            X.append([temp, hum, hora])
-            y.append([0, 1, 0, 0])  # <--- CAMBIO
-        
-        # CONDICIÓN 3: Foco 2 (100 muestras)
-        for _ in range(100):
-            temp = np.random.uniform(20, 25)
-            hum = np.random.uniform(80, 90)
-            hora = np.random.uniform(17.5, 18.0)
-            X.append([temp, hum, hora])
-            y.append([0, 0, 1, 0])  # <--- CAMBIO
-        
-        # Casos OFF - Fuera de las condiciones (150 muestras)
-        for _ in range(150):
+        # Casos OFF - Fuera de las condiciones (200 muestras)
+        for _ in range(200):
+            # Generar datos que NO cumplan ninguna condición
             temp = np.random.choice([
                 np.random.uniform(10, 14),
                 np.random.uniform(26, 35)
@@ -209,55 +258,39 @@ class RedNeuronalMLP:
             ])
             
             X.append([temp, hum, hora])
-            y.append([0, 0, 0, 0])  # <--- CAMBIO
-        
-        # Casos combinados (50 muestras)
-        for _ in range(50):
-            temp = np.random.uniform(10, 30)
-            hum = np.random.uniform(30, 100)
-            hora = np.random.uniform(0, 24)
-            
-            cond1 = 15 <= temp <= 18 and 80 <= hum <= 90 and 17.0 <= hora <= 17.33
-            cond2 = 18 <= temp <= 20 and 90 <= hum <= 100 and 17.5 <= hora <= 18.0
-            cond3 = 20 <= temp <= 25 and 80 <= hum <= 90 and 17.5 <= hora <= 18.0
-            
-            if not (cond1 or cond2 or cond3):
-                X.append([temp, hum, hora])
-                y.append([0, 0, 0, 0]) # <--- CAMBIO
+            y.append([0, 0, 0, 0])
         
         return np.array(X), np.array(y)
 
     def entrenar(self):
-        """Entrenar la red neuronal MLP"""
         try:
             print("\n" + "="*60)
             print("🧠 ENTRENAMIENTO DE RED NEURONAL MLP")
             print("="*60)
-            print("📊 Generando dataset de entrenamiento...")
+            print("📊 Generando dataset con horarios configurados...")
             
             X, y = self.generar_dataset_entrenamiento()
             
             print(f"✓ Dataset generado: {len(X)} muestras")
-            print(f"  - Condición 1 (Motor): ~100 muestras")
-            print(f"  - Condición 2 (Foco 1): ~100 muestras")
-            print(f"  - Condición 3 (Foco 2): ~100 muestras")
-            print(f"  - Casos OFF: ~200 muestras")
             
-            # Normalización de datos
+            # Mostrar configuración actual
+            for relay_key in ['relay1', 'relay2', 'relay3', 'relay4']:
+                config = horarios_config[relay_key]
+                if config['habilitado']:
+                    h_inicio = config['hora_inicio']
+                    h_fin = config['hora_fin']
+                    print(f"  - {config['nombre']}: {h_inicio:.2f}-{h_fin:.2f}h, "
+                          f"T:{config['temp_min']:.0f}-{config['temp_max']:.0f}°C, "
+                          f"H:{config['hum_min']:.0f}-{config['hum_max']:.0f}%")
+            
             X_scaled = self.scaler.fit_transform(X)
             
             print("\n⚙️ Entrenando red neuronal...")
-            print(f"  - Arquitectura: [3] → [16] → [8] → [4]")
-            print(f"  - Activación: ReLU")
-            print(f"  - Optimizador: Adam")
-            
             inicio = time.time()
             self.modelo.fit(X_scaled, y)
             tiempo_entrenamiento = time.time() - inicio
             
-            # Evaluación
             y_pred = self.modelo.predict(X_scaled)
-            # Calculamos accuracy de forma segura para arrays
             accuracy = np.mean([np.array_equal(a, b) for a, b in zip(y_pred, y)]) * 100
             
             self.metricas = {
@@ -275,7 +308,6 @@ class RedNeuronalMLP:
             print(f"  - Accuracy: {accuracy:.2f}%")
             print(f"  - Tiempo: {tiempo_entrenamiento:.3f}s")
             print(f"  - Iteraciones: {self.modelo.n_iter_}")
-            print(f"  - Loss final: {self.metricas['loss']}")
             print("="*60 + "\n")
             
             registrar_evento("MLP", f"Entrenamiento exitoso: Accuracy={accuracy:.2f}%")
@@ -298,21 +330,15 @@ class RedNeuronalMLP:
             }
     
     def predecir(self, temperatura, humedad, hora):
-        """Realizar predicción (inferencia) en tiempo real"""
         if not self.entrenado:
             registrar_evento("WARNING", "MLP no entrenado, retornando estado seguro")
             return {'relay1': False, 'relay2': False, 'relay3': False, 'relay4': False}
         
         try:
-            # Preparar entrada
             X = np.array([[temperatura, humedad, hora]])
             X_scaled = self.scaler.transform(X)
             
-            # Predicción
             prediccion_raw = self.modelo.predict(X_scaled)[0]
-            
-            # --- CAMBIO IMPORTANTE AQUÍ ---
-            # Ahora iteramos sobre números, asegurando que sean 0 o 1
             prediccion = [int(round(x)) for x in prediccion_raw]
             
             resultado = {
@@ -322,7 +348,6 @@ class RedNeuronalMLP:
                 'relay4': bool(prediccion[3])
             }
             
-            # Debug
             if config_umbrales.get('modo_debug', False):
                 print(f"🤖 MLP Inferencia:")
                 print(f"   Entrada: T={temperatura:.1f}°C H={humedad:.1f}% Hora={hora:.2f}")
@@ -336,7 +361,6 @@ class RedNeuronalMLP:
             return {'relay1': False, 'relay2': False, 'relay3': False, 'relay4': False}
     
     def obtener_estado(self):
-        """Retornar información completa del modelo"""
         return {
             'entrenado': self.entrenado,
             'metricas': self.metricas,
@@ -347,27 +371,19 @@ class RedNeuronalMLP:
                 'activacion': 'ReLU',
                 'optimizador': 'Adam',
                 'total_parametros': self.calcular_parametros()
-            },
-            'condiciones': {
-                'condicion_1': 'T: 15-18°C, H: 80-90%, Hora: 17:00-17:20 → Motor',
-                'condicion_2': 'T: 18-20°C, H: 90-100%, Hora: 17:30-18:00 → Foco 1',
-                'condicion_3': 'T: 20-25°C, H: 80-90%, Hora: 17:30-18:00 → Foco 2'
             }
         }
     
     def calcular_parametros(self):
-        """Calcular número total de parámetros de la red"""
         if not self.entrenado:
             return 0
         capas = [3] + [16, 8] + [4]
         total = 0
         for i in range(len(capas) - 1):
-            # Pesos + Sesgos
             total += (capas[i] * capas[i+1]) + capas[i+1]
         return total
     
     def guardar_modelo(self, ruta='modelo_mlp.pkl'):
-        """Guardar modelo entrenado"""
         if self.entrenado:
             try:
                 with open(ruta, 'wb') as f:
@@ -382,7 +398,6 @@ class RedNeuronalMLP:
                 print(f"Error guardando modelo: {e}")
     
     def cargar_modelo(self, ruta='modelo_mlp.pkl'):
-        """Cargar modelo pre-entrenado"""
         try:
             if os.path.exists(ruta):
                 with open(ruta, 'rb') as f:
@@ -398,18 +413,15 @@ class RedNeuronalMLP:
             registrar_evento("ERROR", f"Error cargando modelo: {str(e)}")
         return False
 
-# Instancia global del MLP
 mlp = RedNeuronalMLP()
 
 # ========== FUNCIONES AUXILIARES ==========
 
 def obtener_hora_decimal():
-    """Convertir hora actual a formato decimal (17:30 → 17.5)"""
     ahora = datetime.datetime.now()
     return ahora.hour + ahora.minute / 60.0
 
 def verificar_timeout():
-    """Thread que verifica si el ESP32 sigue conectado"""
     while True:
         time.sleep(30)
         with estado_lock:
@@ -428,36 +440,80 @@ def verificar_timeout():
                     print(f"Error en timeout check: {e}")
 
 def limpiar_sesiones_expiradas():
-    """Thread que limpia sesiones antiguas"""
     while True:
-        time.sleep(300)  # Cada 5 minutos
+        time.sleep(300)
         ahora = time.time()
         sesiones_a_eliminar = [
             sid for sid, ts in sesiones_admin.items() 
-            if ahora - ts > 3600  # 1 hora
+            if ahora - ts > 3600
         ]
         for session_id in sesiones_a_eliminar:
             del sesiones_admin[session_id]
-            print(f"Sesión expirada eliminada: {session_id[:8]}...")
 
-# Iniciar threads de monitoreo
 threading.Thread(target=verificar_timeout, daemon=True).start()
 threading.Thread(target=limpiar_sesiones_expiradas, daemon=True).start()
 
 def verificar_admin_autenticado():
-    """Verificar si la sesión actual es de admin"""
     session_id = session.get('admin_session_id')
     if not session_id or session_id not in sesiones_admin:
         return False
-    # Actualizar timestamp
     sesiones_admin[session_id] = time.time()
     return True
+
+# ========== ENDPOINTS DE HORARIOS ==========
+
+@app.route('/api/horarios', methods=['GET'])
+def obtener_horarios():
+    """Obtener configuración actual de horarios"""
+    return jsonify(horarios_config)
+
+@app.route('/api/horarios', methods=['POST'])
+def actualizar_horarios():
+    """Actualizar configuración de horarios (requiere autenticación)"""
+    if not verificar_admin_autenticado():
+        return jsonify({"error": "Autenticación requerida", "requiere_auth": True}), 403
+    
+    try:
+        data = request.json
+        relay_key = data.get('relay')
+        
+        if relay_key not in horarios_config:
+            return jsonify({"error": "Relay inválido"}), 400
+        
+        # Actualizar configuración
+        if 'habilitado' in data:
+            horarios_config[relay_key]['habilitado'] = data['habilitado']
+        if 'hora_inicio' in data:
+            horarios_config[relay_key]['hora_inicio'] = float(data['hora_inicio'])
+        if 'hora_fin' in data:
+            horarios_config[relay_key]['hora_fin'] = float(data['hora_fin'])
+        if 'temp_min' in data:
+            horarios_config[relay_key]['temp_min'] = float(data['temp_min'])
+        if 'temp_max' in data:
+            horarios_config[relay_key]['temp_max'] = float(data['temp_max'])
+        if 'hum_min' in data:
+            horarios_config[relay_key]['hum_min'] = float(data['hum_min'])
+        if 'hum_max' in data:
+            horarios_config[relay_key]['hum_max'] = float(data['hum_max'])
+        
+        # Guardar cambios
+        guardar_horarios()
+        
+        registrar_evento("CONFIG", f"Horarios actualizados para {relay_key}")
+        
+        return jsonify({
+            "ok": True,
+            "mensaje": "Horarios actualizados correctamente",
+            "horarios": horarios_config
+        })
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ========== ENDPOINTS DE AUTENTICACIÓN ==========
 
 @app.route('/api/auth/login', methods=['POST'])
 def login_admin():
-    """Login de administrador"""
     try:
         data = request.json
         usuario = data.get('usuario', '')
@@ -478,7 +534,6 @@ def login_admin():
 
 @app.route('/api/auth/logout', methods=['POST'])
 def logout_admin():
-    """Cerrar sesión"""
     session_id = session.get('admin_session_id')
     if session_id and session_id in sesiones_admin:
         del sesiones_admin[session_id]
@@ -488,35 +543,27 @@ def logout_admin():
 
 @app.route('/api/auth/verificar', methods=['GET'])
 def verificar_sesion():
-    """Verificar si hay sesión activa"""
     return jsonify({"autenticado": verificar_admin_autenticado()})
 
 # ========== ENDPOINT PRINCIPAL DE TELEMETRÍA ==========
 
 @app.route('/api/telemetria', methods=['POST'])
 def recibir_datos():
-    """
-    Endpoint principal que recibe datos del ESP32 y retorna decisiones del MLP
-    """
     try:
-        # Obtener datos del request
         data = request.get_json(force=True)
         if not data:
             return jsonify({"error": "No data received"}), 400
         
-        # Validar y extraer datos
         temp = float(data.get('t', 20))
         hum = float(data.get('h', 60))
         hora_decimal = obtener_hora_decimal()
         
-        # Validación de rangos
         if not (-40 <= temp <= 80):
             temp = 20.0
         if not (0 <= hum <= 100):
             hum = 60.0
         
         with estado_lock:
-            # Actualizar estadísticas
             if temp > estado_sistema['temp_max_sesion']:
                 estado_sistema['temp_max_sesion'] = temp
             if temp < estado_sistema['temp_min_sesion']:
@@ -528,25 +575,21 @@ def recibir_datos():
             
             modo_actual = estado_sistema['modo']
             
-            # DECISIÓN: AUTO (MLP) o MANUAL
             if modo_actual == "AUTO":
                 if config_umbrales.get('usar_mlp', True) and mlp.entrenado:
-                    # ★ INFERENCIA DE LA RED NEURONAL ★
                     decision = mlp.predecir(temp, hum, hora_decimal)
                     estado_sistema['mlp_activo'] = True
                 else:
                     decision = {'relay1': False, 'relay2': False, 'relay3': False, 'relay4': False}
                     estado_sistema['mlp_activo'] = False
                 
-                # Contar ciclos del motor
                 if decision['relay1'] and not estado_sistema['relay1']:
                     estado_sistema['ciclos_motor'] += 1
                 
-                # Actualizar estado
                 estado_sistema.update(decision)
                 estado_sistema['alertas_activas'] = []
                 
-            else:  # MODO MANUAL
+            else:
                 decision = {
                     'relay1': estado_sistema['manual_relay1'],
                     'relay2': estado_sistema['manual_relay2'],
@@ -556,7 +599,6 @@ def recibir_datos():
                 estado_sistema.update(decision)
                 estado_sistema['alertas_activas'] = ["🎮 Modo MANUAL activo"]
             
-            # Actualizar telemetría
             estado_sistema['temperatura'] = temp
             estado_sistema['humedad'] = hum
             estado_sistema['hora_actual'] = hora_decimal
@@ -564,7 +606,6 @@ def recibir_datos():
             estado_sistema['conectado'] = True
             estado_sistema['mensaje'] = "Sistema operando correctamente"
             
-            # Agregar al historial
             historial.append({
                 "timestamp": estado_sistema['ultima_actualizacion'],
                 "temperatura": temp,
@@ -574,7 +615,6 @@ def recibir_datos():
                 "modo": modo_actual
             })
         
-        # Log de operación
         print(f"✓ [{modo_actual}] T:{temp:.1f}°C H:{hum:.1f}% H:{hora_decimal:.2f} → " +
               f"R1:{decision['relay1']} R2:{decision['relay2']} R3:{decision['relay3']} R4:{decision['relay4']}")
         
@@ -586,27 +626,23 @@ def recibir_datos():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-# ========== ENDPOINTS DE DATOS ==========
+# ========== DEMÁS ENDPOINTS (sin cambios significativos) ==========
 
 @app.route('/api/estado', methods=['GET'])
 def obtener_estado():
-    """Estado actual del sistema"""
     with estado_lock:
         return jsonify(estado_sistema)
 
 @app.route('/api/historial', methods=['GET'])
 def obtener_historial():
-    """Historial de datos"""
     return jsonify({"datos": list(historial)})
 
 @app.route('/api/log', methods=['GET'])
 def obtener_log():
-    """Log de eventos del sistema"""
     return jsonify({"eventos": list(log_eventos)})
 
 @app.route('/api/kpis', methods=['GET'])
 def obtener_kpis():
-    """KPIs y estadísticas"""
     with estado_lock:
         if len(historial) > 0:
             temps = [d['temperatura'] for d in historial]
@@ -618,7 +654,6 @@ def obtener_kpis():
         else:
             temp_promedio = hum_promedio = porcentaje_motor = 0
         
-        # Calcular uptime
         uptime_segundos = 0
         if log_eventos:
             try:
@@ -647,12 +682,10 @@ def obtener_kpis():
 
 @app.route('/api/grafico-datos', methods=['GET'])
 def obtener_datos_grafico():
-    """Datos para gráficos"""
     with estado_lock:
         if len(historial) == 0:
             return jsonify({"labels": [], "temperatura": [], "humedad": []})
         
-        # Últimos 100 datos
         datos = list(historial)[-100:]
         labels = [d['timestamp'].split(' ')[1] for d in datos]
         temperaturas = [d['temperatura'] for d in datos]
@@ -664,11 +697,8 @@ def obtener_datos_grafico():
             "humedad": humedades
         })
 
-# ========== ENDPOINTS DE CONTROL ==========
-
 @app.route('/api/modo', methods=['POST'])
 def cambiar_modo():
-    """Cambiar entre modo AUTO y MANUAL"""
     try:
         data = request.json
         nuevo_modo = data.get('modo', '').upper()
@@ -676,7 +706,6 @@ def cambiar_modo():
         if nuevo_modo not in ['AUTO', 'MANUAL']:
             return jsonify({"error": "Modo inválido (debe ser AUTO o MANUAL)"}), 400
         
-        # Verificar autenticación para modo MANUAL
         if nuevo_modo == 'MANUAL' and not verificar_admin_autenticado():
             return jsonify({"ok": False, "error": "Autenticación requerida", "requiere_auth": True}), 403
         
@@ -685,14 +714,10 @@ def cambiar_modo():
             estado_sistema['modo'] = nuevo_modo
             
             if nuevo_modo == 'MANUAL':
-                # Preservar estado actual al cambiar a manual
                 estado_sistema['manual_relay1'] = estado_sistema['relay1']
                 estado_sistema['manual_relay2'] = estado_sistema['relay2']
                 estado_sistema['manual_relay3'] = estado_sistema['relay3']
                 estado_sistema['manual_relay4'] = estado_sistema['relay4']
-            else:
-                # Al volver a AUTO, el MLP tomará control
-                pass
         
         registrar_evento("MODO", f"Cambiado de {modo_anterior} a {nuevo_modo}")
         return jsonify({"ok": True, "modo": nuevo_modo})
@@ -702,11 +727,10 @@ def cambiar_modo():
 
 @app.route('/api/control', methods=['POST'])
 def control_manual():
-    """Control manual de relés (requiere autenticación)"""
+    if not verificar_admin_autenticado():
+        return jsonify({"error": "Autenticación requerida", "requiere_auth": True}), 403
+    
     try:
-        if not verificar_admin_autenticado():
-            return jsonify({"error": "Autenticación requerida", "requiere_auth": True}), 403
-        
         data = request.json
         relay = data.get('relay')
         estado = data.get('estado', False)
@@ -718,7 +742,6 @@ def control_manual():
             if estado_sistema['modo'] != 'MANUAL':
                 return jsonify({"error": "Control manual solo disponible en modo MANUAL"}), 403
             
-            # Actualizar estado manual
             estado_sistema[f'manual_{relay}'] = estado
             estado_sistema[relay] = estado
         
@@ -728,11 +751,8 @@ def control_manual():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ========== ENDPOINTS MLP ==========
-
 @app.route('/api/mlp/entrenar', methods=['POST'])
 def entrenar_mlp():
-    """Entrenar la red neuronal MLP"""
     if not verificar_admin_autenticado():
         return jsonify({"error": "Autenticación requerida", "requiere_auth": True}), 403
     
@@ -741,34 +761,10 @@ def entrenar_mlp():
 
 @app.route('/api/mlp/estado', methods=['GET'])
 def obtener_estado_mlp():
-    """Obtener estado y métricas del MLP"""
     return jsonify(mlp.obtener_estado())
-
-@app.route('/api/mlp/predecir-manual', methods=['POST'])
-def predecir_manual():
-    """Realizar predicción manual con valores específicos"""
-    try:
-        data = request.json
-        temp = float(data.get('temperatura', 20))
-        hum = float(data.get('humedad', 60))
-        hora = float(data.get('hora', 12))
-        
-        resultado = mlp.predecir(temp, hum, hora)
-        
-        return jsonify({
-            'entradas': {'temperatura': temp, 'humedad': hum, 'hora': hora},
-            'salidas': resultado,
-            'entrenado': mlp.entrenado,
-            'arquitectura': mlp.metricas.get('architecture', 'N/A')
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
-
-# ========== REPORTES ==========
 
 @app.route('/api/reporte/pdf', methods=['GET'])
 def generar_reporte_pdf():
-    """Generar reporte PDF del sistema"""
     try:
         buffer = BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch)
@@ -784,17 +780,14 @@ def generar_reporte_pdf():
             alignment=TA_CENTER
         )
         
-        # Título
         elementos.append(Paragraph("🧠 SISTEMA MLP - CONTROL INTELIGENTE", estilo_titulo))
         elementos.append(Paragraph("Reporte de Monitoreo con Red Neuronal", estilos['Heading2']))
         elementos.append(Spacer(1, 0.3*inch))
         
-        # Fecha
         fecha_reporte = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         elementos.append(Paragraph(f"<b>Fecha del Reporte:</b> {fecha_reporte}", estilos['Normal']))
         elementos.append(Spacer(1, 0.2*inch))
         
-        # Tabla de datos actuales
         with estado_lock:
             datos_resumen = [
                 ['Métrica', 'Valor Actual', 'Máximo', 'Mínimo'],
@@ -822,7 +815,6 @@ def generar_reporte_pdf():
         
         elementos.append(Spacer(1, 0.3*inch))
         
-        # Información MLP
         elementos.append(Paragraph("<b>Red Neuronal MLP</b>", estilos['Heading3']))
         if mlp.entrenado:
             mlp_info = [
@@ -856,30 +848,22 @@ def generar_reporte_pdf():
         print(f"Error generando PDF: {e}")
         return jsonify({"error": str(e)}), 500
 
-# ========== FRONTEND ==========
-
 @app.route('/')
 def home():
-    """Servir página principal"""
     return send_from_directory('static', 'index.html')
 
 @app.route('/<path:path>')
 def static_files(path):
-    """Servir archivos estáticos"""
     return send_from_directory('static', path)
 
-# ========== INICIALIZACIÓN ==========
-
 def inicializar_sistema():
-    """Inicializar todos los componentes del sistema"""
     print("\n" + "="*70)
     print("🧠 SISTEMA MLP - CONTROL INTELIGENTE CON RED NEURONAL")
     print("="*70)
     
-    # Cargar configuración
     cargar_configuracion()
+    cargar_horarios()
     
-    # Intentar cargar modelo pre-entrenado
     if not mlp.cargar_modelo():
         print("\n📦 Modelo MLP no encontrado. Entrenando desde cero...")
         resultado = mlp.entrenar()
@@ -901,6 +885,7 @@ def inicializar_sistema():
     print(f"🔌 API Endpoint: http://localhost:5000/api/telemetria")
     print(f"🤖 Estado MLP: {'ENTRENADO ✅' if mlp.entrenado else 'NO ENTRENADO ⚠️'}")
     print(f"⚙️ Modos: AUTO (MLP) + MANUAL")
+    print(f"⏰ Horarios Configurables desde Dashboard")
     print(f"🔑 Credenciales Admin: usuario='admin' / password='admin123'")
     print("="*70)
     print("\n🚀 Sistema listo. Esperando conexiones...\n")
