@@ -163,22 +163,7 @@ class RedNeuronalMLP:
     
     def generar_dataset_entrenamiento(self):
         """
-        Genera dataset sintético basado en las 3 condiciones del examen:
-        
-        CONDICIÓN 1: Motor (Relay 1)
-        - Temperatura: 15-18°C
-        - Humedad: 80-90%
-        - Hora: 17:00-17:20 (17.0-17.33)
-        
-        CONDICIÓN 2: Foco 1 (Relay 2)
-        - Temperatura: 18-20°C
-        - Humedad: 90-100%
-        - Hora: 17:30-18:00 (17.5-18.0)
-        
-        CONDICIÓN 3: Foco 2 (Relay 3)
-        - Temperatura: 20-25°C
-        - Humedad: 80-90%
-        - Hora: 17:30-18:00 (17.5-18.0)
+        Genera dataset sintético CORREGIDO (Listas numéricas, NO texto)
         """
         X = []
         y = []
@@ -189,7 +174,7 @@ class RedNeuronalMLP:
             hum = np.random.uniform(80, 90)
             hora = np.random.uniform(17.0, 17.33)
             X.append([temp, hum, hora])
-            y.append('1000')  # Solo Relay 1 ON
+            y.append([1, 0, 0, 0])  # <--- CAMBIO: Números [1,0,0,0], NO String '1000'
         
         # CONDICIÓN 2: Foco 1 (100 muestras)
         for _ in range(100):
@@ -197,7 +182,7 @@ class RedNeuronalMLP:
             hum = np.random.uniform(90, 100)
             hora = np.random.uniform(17.5, 18.0)
             X.append([temp, hum, hora])
-            y.append('0100')  # Solo Relay 2 ON
+            y.append([0, 1, 0, 0])  # <--- CAMBIO
         
         # CONDICIÓN 3: Foco 2 (100 muestras)
         for _ in range(100):
@@ -205,46 +190,43 @@ class RedNeuronalMLP:
             hum = np.random.uniform(80, 90)
             hora = np.random.uniform(17.5, 18.0)
             X.append([temp, hum, hora])
-            y.append('0010')  # Solo Relay 3 ON
+            y.append([0, 0, 1, 0])  # <--- CAMBIO
         
         # Casos OFF - Fuera de las condiciones (150 muestras)
         for _ in range(150):
-            # Generar datos que NO cumplan ninguna condición
             temp = np.random.choice([
-                np.random.uniform(10, 14),   # Muy frío
-                np.random.uniform(26, 35)    # Muy caliente
+                np.random.uniform(10, 14),
+                np.random.uniform(26, 35)
             ])
             hum = np.random.choice([
-                np.random.uniform(20, 75),   # Humedad baja/normal
-                np.random.uniform(101, 105)  # Saturado (imposible)
+                np.random.uniform(20, 75),
+                np.random.uniform(101, 105)
             ]) if temp > 25 else np.random.uniform(40, 75)
             
-            # Horas fuera del rango 17:00-18:00
             hora = np.random.choice([
-                np.random.uniform(0, 16),    # Antes
-                np.random.uniform(19, 24)    # Después
+                np.random.uniform(0, 16),
+                np.random.uniform(19, 24)
             ])
             
             X.append([temp, hum, hora])
-            y.append('0000')  # Todos OFF
+            y.append([0, 0, 0, 0])  # <--- CAMBIO
         
-        # Casos combinados (50 muestras) - Realismo adicional
+        # Casos combinados (50 muestras)
         for _ in range(50):
             temp = np.random.uniform(10, 30)
             hum = np.random.uniform(30, 100)
             hora = np.random.uniform(0, 24)
             
-            # Verificar condiciones
             cond1 = 15 <= temp <= 18 and 80 <= hum <= 90 and 17.0 <= hora <= 17.33
             cond2 = 18 <= temp <= 20 and 90 <= hum <= 100 and 17.5 <= hora <= 18.0
             cond3 = 20 <= temp <= 25 and 80 <= hum <= 90 and 17.5 <= hora <= 18.0
             
             if not (cond1 or cond2 or cond3):
                 X.append([temp, hum, hora])
-                y.append('0000')
+                y.append([0, 0, 0, 0]) # <--- CAMBIO
         
         return np.array(X), np.array(y)
-    
+
     def entrenar(self):
         """Entrenar la red neuronal MLP"""
         try:
@@ -275,7 +257,8 @@ class RedNeuronalMLP:
             
             # Evaluación
             y_pred = self.modelo.predict(X_scaled)
-            accuracy = np.mean(y_pred == y) * 100
+            # Calculamos accuracy de forma segura para arrays
+            accuracy = np.mean([np.array_equal(a, b) for a, b in zip(y_pred, y)]) * 100
             
             self.metricas = {
                 'accuracy': round(accuracy, 2),
@@ -326,8 +309,11 @@ class RedNeuronalMLP:
             X_scaled = self.scaler.transform(X)
             
             # Predicción
-            prediccion_str = self.modelo.predict(X_scaled)[0]
-            prediccion = [int(c) for c in prediccion_str]
+            prediccion_raw = self.modelo.predict(X_scaled)[0]
+            
+            # --- CAMBIO IMPORTANTE AQUÍ ---
+            # Ahora iteramos sobre números, asegurando que sean 0 o 1
+            prediccion = [int(round(x)) for x in prediccion_raw]
             
             resultado = {
                 'relay1': bool(prediccion[0]),
