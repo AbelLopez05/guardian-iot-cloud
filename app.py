@@ -1,7 +1,6 @@
-from flask import Flask, request, jsonify, render_template_string, send_from_directory, make_response, session
+from flask import Flask, request, jsonify, send_from_directory, make_response, session
 from flask_cors import CORS
 import datetime
-import random 
 import json
 import os
 import math
@@ -9,44 +8,44 @@ from collections import deque
 import threading
 import time
 from io import BytesIO
-from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.enums import TA_CENTER
 import hashlib
 import secrets
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.neural_network import MLPRegressor
+from sklearn.neural_network import MLPClassifier
 import pickle
 import warnings
 warnings.filterwarnings('ignore')
 
-app = Flask(__name__)
-CORS(app, supports_credentials=True)
+app = Flask(__name__, static_folder='static')
+CORS(app, supports_credentials=True, origins=["*"])
 app.secret_key = secrets.token_hex(32)
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = False  # True solo para HTTPS
 
-# === CONFIGURACIÓN DE AUTENTICACIÓN ===
+# === AUTENTICACIÓN ===
 ADMIN_USER = "admin"
 ADMIN_PASSWORD_HASH = hashlib.sha256("admin123".encode()).hexdigest()
 
 # === ARCHIVO DE CONFIGURACIÓN ===
-CONFIG_FILE = "config_umbrales.json"
+CONFIG_FILE = "config_mlp.json"
 
-# === CONFIGURACIÓN DEL SISTEMA EXPERTO (Valores por defecto) ===
 config_umbrales = {
-    "temp_alerta": 25.0,        # Temperatura para activar ventilador
-    "temp_critica": 31.0,       # Temperatura para activar alarma
-    "humedad_baja": 30.0,       # Umbral de humedad baja
-    "humedad_alta": 85.0,       # Umbral para activar luz pasillo
-    "humedad_critica": 90.0,    # Umbral para activar luz racks
-    "temp_relay4": 33.0         # Temperatura crítica para luz racks
+    "usar_mlp": True,
+    "modo_debug": True,
+    "temp_alerta": 25.0,
+    "temp_critica": 31.0,
+    "humedad_baja": 30.0,
+    "humedad_alta": 85.0
 }
 
 def cargar_configuracion():
-    """Carga la configuración desde archivo JSON"""
     global config_umbrales
     try:
         if os.path.exists(CONFIG_FILE):
@@ -56,19 +55,14 @@ def cargar_configuracion():
             print(f"✅ Configuración cargada desde {CONFIG_FILE}")
             registrar_evento("CONFIG", "Configuración cargada exitosamente")
         else:
-            # Si no existe, crear archivo con valores por defecto
             guardar_configuracion()
-            print(f"📝 Archivo de configuración creado: {CONFIG_FILE}")
     except Exception as e:
         print(f"⚠️ Error cargando configuración: {e}")
-        registrar_evento("ERROR", f"Error cargando configuración: {str(e)}")
 
 def guardar_configuracion():
-    """Guarda la configuración actual en archivo JSON"""
     try:
         with open(CONFIG_FILE, 'w') as f:
             json.dump(config_umbrales, f, indent=4)
-        print(f"💾 Configuración guardada en {CONFIG_FILE}")
         return True
     except Exception as e:
         print(f"❌ Error guardando configuración: {e}")
@@ -78,6 +72,7 @@ def guardar_configuracion():
 estado_sistema = {
     "temperatura": 0.0,
     "humedad": 0.0,
+    "hora_actual": 0.0,
     "relay1": False,
     "relay2": False,
     "relay3": False,
@@ -87,605 +82,455 @@ estado_sistema = {
     "conectado": False,
     "alertas_activas": [],
     "modo": "AUTO",
+    "mlp_activo": True,
     "manual_relay1": False,
     "manual_relay2": False,
     "manual_relay3": False,
     "manual_relay4": False,
-    "temp_max_sesion": 0.0,
-    "temp_min_sesion": 100.0,
+    "temp_max_sesion": -100.0,
+    "temp_min_sesion": 200.0,
     "hum_max_sesion": 0.0,
-    "hum_min_sesion": 100.0,
+    "hum_min_sesion": 200.0,
     "total_alertas": 0,
-    "ciclos_ventilador": 0,
-    "tiempo_ventilador_on": 0,
+    "ciclos_motor": 0,
+    "tiempo_motor_on": 0,
     "uptime_sistema": 0
 }
 
-historial = deque(maxlen=100)
-log_eventos = deque(maxlen=50)
+historial = deque(maxlen=500)
+log_eventos = deque(maxlen=200)
 estado_lock = threading.Lock()
+sesiones_admin = {}
 
 def registrar_evento(tipo, mensaje):
-    """Registra eventos importantes del sistema"""
     evento = {
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "tipo": tipo,
         "mensaje": mensaje
     }
     log_eventos.append(evento)
-    print(f"[{tipo.upper()}] {mensaje}")
+    print(f"[{tipo}] {mensaje}")
 
-sesiones_admin = {}
+# ========== RED NEURONAL MLP ==========
 
-# === RED NEURONAL ===
-class RedNeuronalGuardian:
+class RedNeuronalMLP:
+    """
+    Red Neuronal Perceptrón Multicapa para Control de Relés
+    Arquitectura: [3] → [16-8] → [4]
+    
+    ENTRADAS (3):
+    - Temperatura (°C)
+    - Humedad (%)
+    - Hora (decimal 0-24)
+    
+    SALIDAS (4):
+    - Relay 1: Motor AC
+    - Relay 2: Foco 1
+    - Relay 3: Foco 2
+    - Relay 4: Reserva
+    """
+    
     def __init__(self):
         self.modelo = None
-        self.scaler_entrada = MinMaxScaler(feature_range=(0, 1))
-        self.scaler_salida = MinMaxScaler(feature_range=(0, 1))
+        self.scaler = MinMaxScaler()
         self.entrenado = False
-        self.historial_entrenamientos = []
         self.metricas = {
             'accuracy': 0.0,
+            'samples_trained': 0,
+            'architecture': 'Entrada[3] → [16-8] → Salida[4]',
             'loss': 0.0,
-            'mse': 0.0,
-            'r2_score': 0.0,
-            'predicciones_correctas': 0,
-            'total_predicciones': 0
+            'iterations': 0,
+            'training_time': 0.0
         }
         self.inicializar_modelo()
     
     def inicializar_modelo(self):
-        self.modelo = MLPRegressor(
-            hidden_layer_sizes=(64, 32, 16),
-            activation='relu',
-            solver='adam',
-            learning_rate='adaptive',
-            max_iter=1000,
+        """Crear arquitectura MLP"""
+        self.modelo = MLPClassifier(
+            hidden_layer_sizes=(16, 8),  # 2 capas ocultas
+            activation='relu',            # Función de activación ReLU
+            solver='adam',                # Optimizador Adam
+            max_iter=2000,
             random_state=42,
+            learning_rate='adaptive',
+            learning_rate_init=0.001,
             early_stopping=True,
             validation_fraction=0.2,
             n_iter_no_change=50,
-            alpha=0.001
+            verbose=False
         )
-        registrar_evento("RNA", "Red Neuronal inicializada: 3 capas [64-32-16 neuronas]")
+        registrar_evento("MLP", "Red neuronal MLP inicializada: [3] → [16-8] → [4]")
     
-    def preparar_datos_entrenamiento(self, historial_datos):
-        if len(historial_datos) < 10:
-            return None, None
+    def generar_dataset_entrenamiento(self):
+        """
+        Genera dataset sintético basado en las 3 condiciones del examen:
         
+        CONDICIÓN 1: Motor (Relay 1)
+        - Temperatura: 15-18°C
+        - Humedad: 80-90%
+        - Hora: 17:00-17:20 (17.0-17.33)
+        
+        CONDICIÓN 2: Foco 1 (Relay 2)
+        - Temperatura: 18-20°C
+        - Humedad: 90-100%
+        - Hora: 17:30-18:00 (17.5-18.0)
+        
+        CONDICIÓN 3: Foco 2 (Relay 3)
+        - Temperatura: 20-25°C
+        - Humedad: 80-90%
+        - Hora: 17:30-18:00 (17.5-18.0)
+        """
         X = []
         y = []
         
-        for i in range(len(historial_datos) - 5):
-            ventana = historial_datos[i:i+5]
-            
-            temps = [d['temperatura'] for d in ventana]
-            hums = [d['humedad'] for d in ventana]
-            relay1_estados = [1 if d.get('relay1', False) else 0 for d in ventana]
-            
-            try:
-                hora = int(ventana[-1]['timestamp'].split(' ')[1].split(':')[0])
-            except:
-                hora = 12
-            
-            features = temps + hums + relay1_estados + [hora/24.0]
-            X.append(features)
-            y.append(historial_datos[i+5]['temperatura'])
+        # CONDICIÓN 1: Motor AC (100 muestras)
+        for _ in range(100):
+            temp = np.random.uniform(15, 18)
+            hum = np.random.uniform(80, 90)
+            hora = np.random.uniform(17.0, 17.33)
+            X.append([temp, hum, hora])
+            y.append('1000')  # Solo Relay 1 ON
         
-        return np.array(X), np.array(y).reshape(-1, 1)
+        # CONDICIÓN 2: Foco 1 (100 muestras)
+        for _ in range(100):
+            temp = np.random.uniform(18, 20)
+            hum = np.random.uniform(90, 100)
+            hora = np.random.uniform(17.5, 18.0)
+            X.append([temp, hum, hora])
+            y.append('0100')  # Solo Relay 2 ON
+        
+        # CONDICIÓN 3: Foco 2 (100 muestras)
+        for _ in range(100):
+            temp = np.random.uniform(20, 25)
+            hum = np.random.uniform(80, 90)
+            hora = np.random.uniform(17.5, 18.0)
+            X.append([temp, hum, hora])
+            y.append('0010')  # Solo Relay 3 ON
+        
+        # Casos OFF - Fuera de las condiciones (150 muestras)
+        for _ in range(150):
+            # Generar datos que NO cumplan ninguna condición
+            temp = np.random.choice([
+                np.random.uniform(10, 14),   # Muy frío
+                np.random.uniform(26, 35)    # Muy caliente
+            ])
+            hum = np.random.choice([
+                np.random.uniform(20, 75),   # Humedad baja/normal
+                np.random.uniform(101, 105)  # Saturado (imposible)
+            ]) if temp > 25 else np.random.uniform(40, 75)
+            
+            # Horas fuera del rango 17:00-18:00
+            hora = np.random.choice([
+                np.random.uniform(0, 16),    # Antes
+                np.random.uniform(19, 24)    # Después
+            ])
+            
+            X.append([temp, hum, hora])
+            y.append('0000')  # Todos OFF
+        
+        # Casos combinados (50 muestras) - Realismo adicional
+        for _ in range(50):
+            temp = np.random.uniform(10, 30)
+            hum = np.random.uniform(30, 100)
+            hora = np.random.uniform(0, 24)
+            
+            # Verificar condiciones
+            cond1 = 15 <= temp <= 18 and 80 <= hum <= 90 and 17.0 <= hora <= 17.33
+            cond2 = 18 <= temp <= 20 and 90 <= hum <= 100 and 17.5 <= hora <= 18.0
+            cond3 = 20 <= temp <= 25 and 80 <= hum <= 90 and 17.5 <= hora <= 18.0
+            
+            if not (cond1 or cond2 or cond3):
+                X.append([temp, hum, hora])
+                y.append('0000')
+        
+        return np.array(X), np.array(y)
     
-    def entrenar(self, historial_datos):
+    def entrenar(self):
+        """Entrenar la red neuronal MLP"""
         try:
-            X, y = self.preparar_datos_entrenamiento(list(historial_datos))
+            print("\n" + "="*60)
+            print("🧠 ENTRENAMIENTO DE RED NEURONAL MLP")
+            print("="*60)
+            print("📊 Generando dataset de entrenamiento...")
             
-            if X is None or len(X) < 10:
-                return {
-                    'success': False,
-                    'mensaje': 'Datos insuficientes para entrenamiento (mínimo 10 registros)'
-                }
+            X, y = self.generar_dataset_entrenamiento()
             
-            X_scaled = self.scaler_entrada.fit_transform(X)
-            y_scaled = self.scaler_salida.fit_transform(y)
+            print(f"✓ Dataset generado: {len(X)} muestras")
+            print(f"  - Condición 1 (Motor): ~100 muestras")
+            print(f"  - Condición 2 (Foco 1): ~100 muestras")
+            print(f"  - Condición 3 (Foco 2): ~100 muestras")
+            print(f"  - Casos OFF: ~200 muestras")
+            
+            # Normalización de datos
+            X_scaled = self.scaler.fit_transform(X)
+            
+            print("\n⚙️ Entrenando red neuronal...")
+            print(f"  - Arquitectura: [3] → [16] → [8] → [4]")
+            print(f"  - Activación: ReLU")
+            print(f"  - Optimizador: Adam")
             
             inicio = time.time()
-            self.modelo.fit(X_scaled, y_scaled.ravel())
+            self.modelo.fit(X_scaled, y)
             tiempo_entrenamiento = time.time() - inicio
             
-            y_pred_scaled = self.modelo.predict(X_scaled)
-            y_pred = self.scaler_salida.inverse_transform(y_pred_scaled.reshape(-1, 1))
+            # Evaluación
+            y_pred = self.modelo.predict(X_scaled)
+            accuracy = np.mean(y_pred == y) * 100
             
-            from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
-            
-            mse = mean_squared_error(y, y_pred)
-            mae = mean_absolute_error(y, y_pred)
-            r2 = r2_score(y, y_pred)
-            rmse = np.sqrt(mse)
-            
-            diferencias = np.abs(y - y_pred)
-            predicciones_correctas = np.sum(diferencias <= 1.0)
-            accuracy = (predicciones_correctas / len(y)) * 100
-            
-            mejor_loss = 0.0
-            if hasattr(self.modelo, 'best_loss_') and self.modelo.best_loss_ is not None:
-                mejor_loss = round(self.modelo.best_loss_, 4)
-
             self.metricas = {
                 'accuracy': round(accuracy, 2),
-                'loss': round(mse, 4),
-                'mse': round(mse, 4),
-                'rmse': round(rmse, 4),
-                'mae': round(mae, 4),
-                'r2_score': round(r2, 4),
-                'predicciones_correctas': int(predicciones_correctas),
-                'total_predicciones': len(y),
-                'tiempo_entrenamiento': round(tiempo_entrenamiento, 2),
-                'muestras_entrenamiento': len(X),
-                'iteraciones': self.modelo.n_iter_,
-                'mejor_loss': mejor_loss
+                'samples_trained': len(X),
+                'training_time': round(tiempo_entrenamiento, 3),
+                'iterations': self.modelo.n_iter_,
+                'architecture': 'Entrada[3] → [16-8] → Salida[4]',
+                'loss': round(self.modelo.loss_, 6) if hasattr(self.modelo, 'loss_') else 0.0
             }
             
             self.entrenado = True
             
-            self.historial_entrenamientos.append({
-                'timestamp': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'metricas': self.metricas.copy()
-            })
+            print(f"\n✅ ENTRENAMIENTO COMPLETADO")
+            print(f"  - Accuracy: {accuracy:.2f}%")
+            print(f"  - Tiempo: {tiempo_entrenamiento:.3f}s")
+            print(f"  - Iteraciones: {self.modelo.n_iter_}")
+            print(f"  - Loss final: {self.metricas['loss']}")
+            print("="*60 + "\n")
             
-            registrar_evento("RNA", f"Entrenamiento exitoso: Accuracy={accuracy:.2f}% | R²={r2:.4f}")
+            registrar_evento("MLP", f"Entrenamiento exitoso: Accuracy={accuracy:.2f}%")
+            self.guardar_modelo()
             
             return {
                 'success': True,
-                'mensaje': 'Red neuronal entrenada exitosamente',
+                'mensaje': 'Red neuronal MLP entrenada exitosamente',
                 'metricas': self.metricas
             }
             
         except Exception as e:
-            print(f"❌ ERROR DETALLADO EN ENTRENAMIENTO: {e}")
-            registrar_evento("ERROR", f"Error entrenando red neuronal: {str(e)}")
+            print(f"❌ ERROR EN ENTRENAMIENTO: {e}")
+            import traceback
+            traceback.print_exc()
+            registrar_evento("ERROR", f"Error entrenando MLP: {str(e)}")
             return {
                 'success': False,
                 'mensaje': f'Error en entrenamiento: {str(e)}'
             }
     
-    def predecir(self, historial_reciente):
+    def predecir(self, temperatura, humedad, hora):
+        """Realizar predicción (inferencia) en tiempo real"""
         if not self.entrenado:
-            return None
+            registrar_evento("WARNING", "MLP no entrenado, retornando estado seguro")
+            return {'relay1': False, 'relay2': False, 'relay3': False, 'relay4': False}
         
         try:
-            if len(historial_reciente) < 5:
-                return None
+            # Preparar entrada
+            X = np.array([[temperatura, humedad, hora]])
+            X_scaled = self.scaler.transform(X)
             
-            ventana = list(historial_reciente)[-5:]
+            # Predicción
+            prediccion_str = self.modelo.predict(X_scaled)[0]
+            prediccion = [int(c) for c in prediccion_str]
             
-            temps = [d['temperatura'] for d in ventana]
-            hums = [d['humedad'] for d in ventana]
-            relay1_estados = [1 if d.get('relay1', False) else 0 for d in ventana]
+            resultado = {
+                'relay1': bool(prediccion[0]),
+                'relay2': bool(prediccion[1]),
+                'relay3': bool(prediccion[2]),
+                'relay4': bool(prediccion[3])
+            }
             
-            try:
-                hora = int(ventana[-1]['timestamp'].split(' ')[1].split(':')[0])
-            except:
-                hora = 12
+            # Debug
+            if config_umbrales.get('modo_debug', False):
+                print(f"🤖 MLP Inferencia:")
+                print(f"   Entrada: T={temperatura:.1f}°C H={humedad:.1f}% Hora={hora:.2f}")
+                print(f"   Salida: {prediccion} → {resultado}")
             
-            features = temps + hums + relay1_estados + [hora/24.0]
-            X = np.array([features])
-            
-            X_scaled = self.scaler_entrada.transform(X)
-            y_pred_scaled = self.modelo.predict(X_scaled)
-            y_pred = self.scaler_salida.inverse_transform(y_pred_scaled.reshape(-1, 1))
-            
-            return float(y_pred[0][0])
+            return resultado
             
         except Exception as e:
+            print(f"❌ Error en predicción MLP: {e}")
             registrar_evento("ERROR", f"Error en predicción: {str(e)}")
-            return None
-    
-    def predecir_multiples_pasos(self, historial_reciente, pasos=10):
-        if not self.entrenado or len(historial_reciente) < 5:
-            return []
-        
-        predicciones = []
-        ventana_actual = list(historial_reciente)[-5:]
-        
-        for _ in range(pasos):
-            prediccion = self.predecir(ventana_actual)
-            if prediccion is None:
-                break
-            
-            predicciones.append(prediccion)
-            
-            nuevo_registro = {
-                'temperatura': prediccion,
-                'humedad': ventana_actual[-1]['humedad'],
-                'relay1': ventana_actual[-1].get('relay1', False),
-                'timestamp': ventana_actual[-1]['timestamp']
-            }
-            ventana_actual.append(nuevo_registro)
-            ventana_actual.pop(0)
-        
-        return predicciones
+            return {'relay1': False, 'relay2': False, 'relay3': False, 'relay4': False}
     
     def obtener_estado(self):
+        """Retornar información completa del modelo"""
         return {
             'entrenado': self.entrenado,
             'metricas': self.metricas,
             'arquitectura': {
-                'capas_ocultas': [64, 32, 16],
+                'entradas': ['Temperatura (°C)', 'Humedad (%)', 'Hora (24h)'],
+                'capas_ocultas': [16, 8],
+                'salidas': ['Relay 1 (Motor)', 'Relay 2 (Foco 1)', 'Relay 3 (Foco 2)', 'Relay 4 (Reserva)'],
                 'activacion': 'ReLU',
                 'optimizador': 'Adam',
                 'total_parametros': self.calcular_parametros()
             },
-            'historial_entrenamientos': len(self.historial_entrenamientos)
+            'condiciones': {
+                'condicion_1': 'T: 15-18°C, H: 80-90%, Hora: 17:00-17:20 → Motor',
+                'condicion_2': 'T: 18-20°C, H: 90-100%, Hora: 17:30-18:00 → Foco 1',
+                'condicion_3': 'T: 20-25°C, H: 80-90%, Hora: 17:30-18:00 → Foco 2'
+            }
         }
     
     def calcular_parametros(self):
+        """Calcular número total de parámetros de la red"""
         if not self.entrenado:
             return 0
-        
+        capas = [3] + [16, 8] + [4]
         total = 0
-        capas = [16] + list([64, 32, 16]) + [1]
-        
         for i in range(len(capas) - 1):
+            # Pesos + Sesgos
             total += (capas[i] * capas[i+1]) + capas[i+1]
-        
         return total
     
-    def guardar_modelo(self, ruta='modelo_guardian.pkl'):
+    def guardar_modelo(self, ruta='modelo_mlp.pkl'):
+        """Guardar modelo entrenado"""
         if self.entrenado:
-            with open(ruta, 'wb') as f:
-                pickle.dump({
-                    'modelo': self.modelo,
-                    'scaler_entrada': self.scaler_entrada,
-                    'scaler_salida': self.scaler_salida,
-                    'metricas': self.metricas
-                }, f)
-            registrar_evento("RNA", f"Modelo guardado en {ruta}")
+            try:
+                with open(ruta, 'wb') as f:
+                    pickle.dump({
+                        'modelo': self.modelo,
+                        'scaler': self.scaler,
+                        'metricas': self.metricas,
+                        'version': '4.0'
+                    }, f)
+                registrar_evento("MLP", f"Modelo guardado en {ruta}")
+            except Exception as e:
+                print(f"Error guardando modelo: {e}")
     
-    def cargar_modelo(self, ruta='modelo_guardian.pkl'):
+    def cargar_modelo(self, ruta='modelo_mlp.pkl'):
+        """Cargar modelo pre-entrenado"""
         try:
             if os.path.exists(ruta):
                 with open(ruta, 'rb') as f:
                     data = pickle.load(f)
                     self.modelo = data['modelo']
-                    self.scaler_entrada = data['scaler_entrada']
-                    self.scaler_salida = data['scaler_salida']
+                    self.scaler = data['scaler']
                     self.metricas = data['metricas']
                     self.entrenado = True
-                registrar_evento("RNA", f"Modelo cargado desde {ruta}")
+                registrar_evento("MLP", f"Modelo cargado desde {ruta}")
                 return True
         except Exception as e:
+            print(f"Error cargando modelo: {e}")
             registrar_evento("ERROR", f"Error cargando modelo: {str(e)}")
         return False
 
-red_neuronal = RedNeuronalGuardian()
+# Instancia global del MLP
+mlp = RedNeuronalMLP()
 
-def motor_de_inferencia(temp, hum):
-    """
-    MOTOR DE INFERENCIA CON UMBRALES DINÁMICOS
-    """
-    acciones = {
-        "relay1": False,
-        "relay2": False,
-        "relay3": False,
-        "relay4": False
-    }
-    alertas = []
-    
-    # === REGLAS DE TEMPERATURA ===
-    if temp >= config_umbrales["temp_relay4"]:
-        acciones["relay1"] = True
-        acciones["relay2"] = True
-        acciones["relay4"] = True
-        alertas.append(f"🔥 CRÍTICO EXTREMO: Temperatura {temp}°C ≥ {config_umbrales['temp_relay4']}°C")
-        registrar_evento("CRÍTICO", f"Temperatura crítica extrema: {temp}°C - Todos los sistemas activados")
-        
-    elif temp >= config_umbrales["temp_critica"]:
-        acciones["relay1"] = True
-        acciones["relay2"] = True
-        alertas.append(f"⚠️ CRÍTICO: Temperatura {temp}°C ≥ {config_umbrales['temp_critica']}°C")
-        registrar_evento("CRÍTICO", f"Temperatura crítica: {temp}°C")
-        
-    elif temp >= config_umbrales["temp_alerta"]:
-        acciones["relay1"] = True
-        alertas.append(f"⚡ ALERTA: Temperatura {temp}°C ≥ {config_umbrales['temp_alerta']}°C")
-        
-    # === REGLAS DE HUMEDAD ===
-    if hum >= config_umbrales["humedad_critica"]:
-        acciones["relay3"] = True
-        acciones["relay4"] = True
-        alertas.append(f"💧 HUMEDAD CRÍTICA: {hum}% ≥ {config_umbrales['humedad_critica']}%")
-        registrar_evento("CRÍTICO", f"Humedad crítica: {hum}% - Luces de inspección activadas")
-    
-    elif hum >= config_umbrales["humedad_alta"]:
-        acciones["relay3"] = True
-        alertas.append(f"💧 Humedad alta: {hum}% ≥ {config_umbrales['humedad_alta']}% - Luz Pasillo activada")
-        registrar_evento("WARNING", f"Humedad alta: {hum}% - Luz Pasillo activada")
-        
-    elif hum < config_umbrales["humedad_baja"]:
-        alertas.append(f"🏜️ Humedad baja: {hum}% < {config_umbrales['humedad_baja']}%")
-    
-    return acciones, alertas
+# ========== FUNCIONES AUXILIARES ==========
+
+def obtener_hora_decimal():
+    """Convertir hora actual a formato decimal (17:30 → 17.5)"""
+    ahora = datetime.datetime.now()
+    return ahora.hour + ahora.minute / 60.0
 
 def verificar_timeout():
+    """Thread que verifica si el ESP32 sigue conectado"""
     while True:
         time.sleep(30)
-        
         with estado_lock:
             if estado_sistema["ultima_actualizacion"]:
-                ultimo = datetime.datetime.strptime(
-                    estado_sistema["ultima_actualizacion"], 
-                    "%Y-%m-%d %H:%M:%S"
-                )
-                diferencia = (datetime.datetime.now() - ultimo).seconds
-                
-                if diferencia > 60 and estado_sistema["conectado"]:
-                    estado_sistema["conectado"] = False
-                    estado_sistema["mensaje"] = "⚠️ ESP32 desconectado"
-                    registrar_evento("WARNING", "ESP32 sin respuesta por más de 60s")
+                try:
+                    ultimo = datetime.datetime.strptime(
+                        estado_sistema["ultima_actualizacion"], 
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+                    diferencia = (datetime.datetime.now() - ultimo).seconds
+                    if diferencia > 60 and estado_sistema["conectado"]:
+                        estado_sistema["conectado"] = False
+                        estado_sistema["mensaje"] = "⚠️ ESP32 desconectado (timeout)"
+                        registrar_evento("WARNING", "ESP32 sin respuesta por más de 60s")
+                except Exception as e:
+                    print(f"Error en timeout check: {e}")
 
 def limpiar_sesiones_expiradas():
+    """Thread que limpia sesiones antiguas"""
     while True:
-        time.sleep(300)
+        time.sleep(300)  # Cada 5 minutos
         ahora = time.time()
-        sesiones_a_eliminar = []
-        
-        for session_id, timestamp in sesiones_admin.items():
-            if ahora - timestamp > 3600:
-                sesiones_a_eliminar.append(session_id)
-        
+        sesiones_a_eliminar = [
+            sid for sid, ts in sesiones_admin.items() 
+            if ahora - ts > 3600  # 1 hora
+        ]
         for session_id in sesiones_a_eliminar:
             del sesiones_admin[session_id]
-            registrar_evento("AUTH", f"Sesión expirada: {session_id[:8]}...")
+            print(f"Sesión expirada eliminada: {session_id[:8]}...")
 
+# Iniciar threads de monitoreo
 threading.Thread(target=verificar_timeout, daemon=True).start()
 threading.Thread(target=limpiar_sesiones_expiradas, daemon=True).start()
 
 def verificar_admin_autenticado():
+    """Verificar si la sesión actual es de admin"""
     session_id = session.get('admin_session_id')
-    if not session_id:
+    if not session_id or session_id not in sesiones_admin:
         return False
-    
-    if session_id in sesiones_admin:
-        sesiones_admin[session_id] = time.time()
-        return True
-    
-    return False
+    # Actualizar timestamp
+    sesiones_admin[session_id] = time.time()
+    return True
 
-# === ENDPOINTS DE AUTENTICACIÓN ===
+# ========== ENDPOINTS DE AUTENTICACIÓN ==========
 
 @app.route('/api/auth/login', methods=['POST'])
 def login_admin():
+    """Login de administrador"""
     try:
         data = request.json
         usuario = data.get('usuario', '')
         password = data.get('password', '')
-        
         password_hash = hashlib.sha256(password.encode()).hexdigest()
         
         if usuario == ADMIN_USER and password_hash == ADMIN_PASSWORD_HASH:
             session_id = secrets.token_hex(32)
             session['admin_session_id'] = session_id
             sesiones_admin[session_id] = time.time()
-            
             registrar_evento("AUTH", f"Login exitoso - Usuario: {usuario}")
-            
-            return jsonify({
-                "ok": True,
-                "mensaje": "Autenticación exitosa",
-                "session_id": session_id
-            })
+            return jsonify({"ok": True, "mensaje": "Autenticación exitosa"})
         else:
-            registrar_evento("AUTH", f"Intento de login fallido - Usuario: {usuario}")
-            return jsonify({
-                "ok": False,
-                "mensaje": "Credenciales incorrectas"
-            }), 401
-            
-    except Exception as e:
-        registrar_evento("ERROR", f"Error en login: {str(e)}")
-        return jsonify({"ok": False, "mensaje": "Error interno"}), 500
-
-@app.route('/api/auth/logout', methods=['POST'])
-def logout_admin():
-    try:
-        session_id = session.get('admin_session_id')
-        if session_id and session_id in sesiones_admin:
-            del sesiones_admin[session_id]
-            registrar_evento("AUTH", "Logout exitoso")
-        
-        session.pop('admin_session_id', None)
-        
-        return jsonify({"ok": True, "mensaje": "Sesión cerrada"})
+            registrar_evento("AUTH", f"Intento fallido de login - Usuario: {usuario}")
+            return jsonify({"ok": False, "mensaje": "Credenciales incorrectas"}), 401
     except Exception as e:
         return jsonify({"ok": False, "mensaje": str(e)}), 500
 
+@app.route('/api/auth/logout', methods=['POST'])
+def logout_admin():
+    """Cerrar sesión"""
+    session_id = session.get('admin_session_id')
+    if session_id and session_id in sesiones_admin:
+        del sesiones_admin[session_id]
+        registrar_evento("AUTH", "Sesión cerrada")
+    session.pop('admin_session_id', None)
+    return jsonify({"ok": True})
+
 @app.route('/api/auth/verificar', methods=['GET'])
 def verificar_sesion():
-    autenticado = verificar_admin_autenticado()
-    return jsonify({"autenticado": autenticado})
+    """Verificar si hay sesión activa"""
+    return jsonify({"autenticado": verificar_admin_autenticado()})
 
-# === ENDPOINTS DE CONFIGURACIÓN DE UMBRALES ===
-
-@app.route('/api/config/umbrales', methods=['GET'])
-def obtener_umbrales():
-    """Obtiene la configuración actual de umbrales"""
-    return jsonify({
-        "ok": True,
-        "umbrales": config_umbrales
-    })
-
-@app.route('/api/config/umbrales', methods=['POST'])
-def actualizar_umbrales():
-    """Actualiza los umbrales del sistema (requiere autenticación)"""
-    try:
-        if not verificar_admin_autenticado():
-            return jsonify({
-                "ok": False,
-                "error": "Autenticación requerida",
-                "requiere_auth": True
-            }), 403
-        
-        data = request.json
-        
-        # Validar que los valores sean numéricos y razonables
-        nuevos_umbrales = {}
-        
-        # Temperatura alerta (ventilador)
-        if 'temp_alerta' in data:
-            val = float(data['temp_alerta'])
-            if 15.0 <= val <= 35.0:
-                nuevos_umbrales['temp_alerta'] = val
-            else:
-                return jsonify({"ok": False, "error": "temp_alerta debe estar entre 15-35°C"}), 400
-        
-        # Temperatura crítica (alarma)
-        if 'temp_critica' in data:
-            val = float(data['temp_critica'])
-            if 20.0 <= val <= 40.0:
-                nuevos_umbrales['temp_critica'] = val
-            else:
-                return jsonify({"ok": False, "error": "temp_critica debe estar entre 20-40°C"}), 400
-        
-        # Temperatura relay 4
-        if 'temp_relay4' in data:
-            val = float(data['temp_relay4'])
-            if 25.0 <= val <= 45.0:
-                nuevos_umbrales['temp_relay4'] = val
-            else:
-                return jsonify({"ok": False, "error": "temp_relay4 debe estar entre 25-45°C"}), 400
-        
-        # Humedad baja
-        if 'humedad_baja' in data:
-            val = float(data['humedad_baja'])
-            if 10.0 <= val <= 50.0:
-                nuevos_umbrales['humedad_baja'] = val
-            else:
-                return jsonify({"ok": False, "error": "humedad_baja debe estar entre 10-50%"}), 400
-        
-        # Humedad alta (relay 3)
-        if 'humedad_alta' in data:
-            val = float(data['humedad_alta'])
-            if 60.0 <= val <= 95.0:
-                nuevos_umbrales['humedad_alta'] = val
-            else:
-                return jsonify({"ok": False, "error": "humedad_alta debe estar entre 60-95%"}), 400
-        
-        # Humedad crítica (relay 4)
-        if 'humedad_critica' in data:
-            val = float(data['humedad_critica'])
-            if 70.0 <= val <= 100.0:
-                nuevos_umbrales['humedad_critica'] = val
-            else:
-                return jsonify({"ok": False, "error": "humedad_critica debe estar entre 70-100%"}), 400
-        
-        # Validación lógica: temp_critica debe ser mayor que temp_alerta
-        temp_alerta = nuevos_umbrales.get('temp_alerta', config_umbrales['temp_alerta'])
-        temp_critica = nuevos_umbrales.get('temp_critica', config_umbrales['temp_critica'])
-        
-        if temp_critica <= temp_alerta:
-            return jsonify({
-                "ok": False,
-                "error": "temp_critica debe ser mayor que temp_alerta"
-            }), 400
-        
-        # Actualizar configuración
-        config_umbrales.update(nuevos_umbrales)
-        
-        # Guardar en archivo
-        if guardar_configuracion():
-            registrar_evento("CONFIG", f"Umbrales actualizados: {nuevos_umbrales}")
-            return jsonify({
-                "ok": True,
-                "mensaje": "Umbrales actualizados exitosamente",
-                "umbrales": config_umbrales
-            })
-        else:
-            return jsonify({
-                "ok": False,
-                "error": "Error guardando configuración"
-            }), 500
-            
-    except ValueError as e:
-        return jsonify({"ok": False, "error": f"Valor inválido: {str(e)}"}), 400
-    except Exception as e:
-        registrar_evento("ERROR", f"Error actualizando umbrales: {str(e)}")
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-@app.route('/api/config/umbrales/reset', methods=['POST'])
-def resetear_umbrales():
-    """Resetea los umbrales a valores por defecto (requiere autenticación)"""
-    try:
-        if not verificar_admin_autenticado():
-            return jsonify({
-                "ok": False,
-                "error": "Autenticación requerida",
-                "requiere_auth": True
-            }), 403
-        
-        # Valores por defecto
-        config_umbrales.update({
-            "temp_alerta": 25.0,
-            "temp_critica": 31.0,
-            "humedad_baja": 30.0,
-            "humedad_alta": 85.0,
-            "humedad_critica": 90.0,
-            "temp_relay4": 33.0
-        })
-        
-        guardar_configuracion()
-        registrar_evento("CONFIG", "Umbrales reseteados a valores por defecto")
-        
-        return jsonify({
-            "ok": True,
-            "mensaje": "Umbrales reseteados a valores por defecto",
-            "umbrales": config_umbrales
-        })
-        
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-# === ENDPOINTS PRINCIPALES ===
-
-@app.route('/')
-def home():
-    try:
-        return send_from_directory('static', 'index.html')
-    except Exception as e:
-        return f"""
-        <html>
-        <body style="font-family: Arial; padding: 50px; text-align: center;">
-            <h1>🛡️ Guardian IoT</h1>
-            <h2 style="color: red;">Error cargando dashboard</h2>
-            <p>Error: {str(e)}</p>
-            <p><a href="/api/estado">Ver API Estado</a></p>
-        </body>
-        </html>
-        """
+# ========== ENDPOINT PRINCIPAL DE TELEMETRÍA ==========
 
 @app.route('/api/telemetria', methods=['POST'])
 def recibir_datos():
+    """
+    Endpoint principal que recibe datos del ESP32 y retorna decisiones del MLP
+    """
     try:
-        cuerpo_crudo = request.get_data(as_text=True)
-        
-        data = None
-        if cuerpo_crudo:
-            try:
-                data = json.loads(cuerpo_crudo)
-            except:
-                pass
-        
+        # Obtener datos del request
+        data = request.get_json(force=True)
         if not data:
-            data = request.get_json(force=True, silent=True)
-
-        if not data:
-            data = {"t": 20.0, "h": 60.0}
+            return jsonify({"error": "No data received"}), 400
         
-        temp = float(data.get('t', 0))
-        hum = float(data.get('h', 0))
+        # Validar y extraer datos
+        temp = float(data.get('t', 20))
+        hum = float(data.get('h', 60))
+        hora_decimal = obtener_hora_decimal()
+        
+        # Validación de rangos
+        if not (-40 <= temp <= 80):
+            temp = 20.0
+        if not (0 <= hum <= 100):
+            hum = 60.0
         
         with estado_lock:
-            modo_actual = estado_sistema['modo']
-            
+            # Actualizar estadísticas
             if temp > estado_sistema['temp_max_sesion']:
                 estado_sistema['temp_max_sesion'] = temp
             if temp < estado_sistema['temp_min_sesion']:
@@ -695,18 +540,27 @@ def recibir_datos():
             if hum < estado_sistema['hum_min_sesion']:
                 estado_sistema['hum_min_sesion'] = hum
             
-            if modo_actual == "AUTO":
-                decision, alertas = motor_de_inferencia(temp, hum)
-                
-                if decision['relay1'] and not estado_sistema['relay1']:
-                    estado_sistema['ciclos_ventilador'] += 1
-                if len(alertas) > 0:
-                    estado_sistema['total_alertas'] += 1
-                
-                estado_sistema.update(decision)
-                estado_sistema['alertas_activas'] = alertas
+            modo_actual = estado_sistema['modo']
             
-            else:
+            # DECISIÓN: AUTO (MLP) o MANUAL
+            if modo_actual == "AUTO":
+                if config_umbrales.get('usar_mlp', True) and mlp.entrenado:
+                    # ★ INFERENCIA DE LA RED NEURONAL ★
+                    decision = mlp.predecir(temp, hum, hora_decimal)
+                    estado_sistema['mlp_activo'] = True
+                else:
+                    decision = {'relay1': False, 'relay2': False, 'relay3': False, 'relay4': False}
+                    estado_sistema['mlp_activo'] = False
+                
+                # Contar ciclos del motor
+                if decision['relay1'] and not estado_sistema['relay1']:
+                    estado_sistema['ciclos_motor'] += 1
+                
+                # Actualizar estado
+                estado_sistema.update(decision)
+                estado_sistema['alertas_activas'] = []
+                
+            else:  # MODO MANUAL
                 decision = {
                     'relay1': estado_sistema['manual_relay1'],
                     'relay2': estado_sistema['manual_relay2'],
@@ -714,67 +568,80 @@ def recibir_datos():
                     'relay4': estado_sistema['manual_relay4']
                 }
                 estado_sistema.update(decision)
-                estado_sistema['alertas_activas'] = [f"🎮 Modo MANUAL activo"]
+                estado_sistema['alertas_activas'] = ["🎮 Modo MANUAL activo"]
             
+            # Actualizar telemetría
             estado_sistema['temperatura'] = temp
             estado_sistema['humedad'] = hum
+            estado_sistema['hora_actual'] = hora_decimal
             estado_sistema['ultima_actualizacion'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             estado_sistema['conectado'] = True
-            estado_sistema['mensaje'] = f"Sistema en modo {modo_actual}"
+            estado_sistema['mensaje'] = "Sistema operando correctamente"
             
+            # Agregar al historial
             historial.append({
                 "timestamp": estado_sistema['ultima_actualizacion'],
                 "temperatura": temp,
                 "humedad": hum,
-                "relay1": decision['relay1'],
-                "relay2": decision['relay2'],
-                "relay3": decision['relay3'],
-                "relay4": decision['relay4'],
+                "hora": hora_decimal,
+                **decision,
                 "modo": modo_actual
             })
         
-        print(f"✓ [{modo_actual}] T:{temp}°C H:{hum}% -> R1:{decision['relay1']}")
-        return jsonify(decision)
+        # Log de operación
+        print(f"✓ [{modo_actual}] T:{temp:.1f}°C H:{hum:.1f}% H:{hora_decimal:.2f} → " +
+              f"R1:{decision['relay1']} R2:{decision['relay2']} R3:{decision['relay3']} R4:{decision['relay4']}")
+        
+        return jsonify(decision), 200
         
     except Exception as e:
-        print(f"🔥 [ERROR CRÍTICO] {str(e)}")
-        return jsonify({"error": "Error interno"}), 500
+        print(f"🔥 ERROR en /api/telemetria: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+# ========== ENDPOINTS DE DATOS ==========
 
 @app.route('/api/estado', methods=['GET'])
 def obtener_estado():
+    """Estado actual del sistema"""
     with estado_lock:
         return jsonify(estado_sistema)
 
 @app.route('/api/historial', methods=['GET'])
 def obtener_historial():
+    """Historial de datos"""
     return jsonify({"datos": list(historial)})
 
 @app.route('/api/log', methods=['GET'])
 def obtener_log():
+    """Log de eventos del sistema"""
     return jsonify({"eventos": list(log_eventos)})
 
 @app.route('/api/kpis', methods=['GET'])
 def obtener_kpis():
+    """KPIs y estadísticas"""
     with estado_lock:
         if len(historial) > 0:
             temps = [d['temperatura'] for d in historial]
             hums = [d['humedad'] for d in historial]
             temp_promedio = sum(temps) / len(temps)
             hum_promedio = sum(hums) / len(hums)
-            
-            ventilador_activo = sum(1 for d in historial if d.get('relay1', False))
-            porcentaje_ventilador = (ventilador_activo / len(historial)) * 100
+            motor_activo = sum(1 for d in historial if d.get('relay1', False))
+            porcentaje_motor = (motor_activo / len(historial)) * 100
         else:
-            temp_promedio = 0
-            hum_promedio = 0
-            porcentaje_ventilador = 0
+            temp_promedio = hum_promedio = porcentaje_motor = 0
         
-        uptime_segundos = (datetime.datetime.now() - datetime.datetime.strptime(
-            log_eventos[0]['timestamp'] if log_eventos else datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "%Y-%m-%d %H:%M:%S"
-        )).total_seconds() if log_eventos else 0
+        # Calcular uptime
+        uptime_segundos = 0
+        if log_eventos:
+            try:
+                inicio = datetime.datetime.strptime(log_eventos[0]['timestamp'], "%Y-%m-%d %H:%M:%S")
+                uptime_segundos = (datetime.datetime.now() - inicio).total_seconds()
+            except:
+                pass
         
-        kpis = {
+        return jsonify({
             "temp_actual": estado_sistema['temperatura'],
             "temp_max": estado_sistema['temp_max_sesion'],
             "temp_min": estado_sistema['temp_min_sesion'],
@@ -784,212 +651,23 @@ def obtener_kpis():
             "hum_min": estado_sistema['hum_min_sesion'],
             "hum_promedio": round(hum_promedio, 2),
             "total_alertas": estado_sistema['total_alertas'],
-            "ciclos_ventilador": estado_sistema['ciclos_ventilador'],
-            "porcentaje_ventilador": round(porcentaje_ventilador, 2),
+            "ciclos_motor": estado_sistema['ciclos_motor'],
+            "porcentaje_motor": round(porcentaje_motor, 2),
             "uptime_segundos": int(uptime_segundos),
             "uptime_formato": str(datetime.timedelta(seconds=int(uptime_segundos))),
             "total_registros": len(historial),
             "modo_actual": estado_sistema['modo']
-        }
-        
-        return jsonify(kpis)
-
-@app.route('/api/modo', methods=['POST'])
-def cambiar_modo():
-    try:
-        data = request.json
-        nuevo_modo = data.get('modo', '').upper()
-        
-        if nuevo_modo not in ['AUTO', 'MANUAL']:
-            return jsonify({"error": "Modo inválido. Usar 'AUTO' o 'MANUAL'"}), 400
-        
-        if nuevo_modo == 'MANUAL':
-            if not verificar_admin_autenticado():
-                return jsonify({
-                    "ok": False,
-                    "error": "Autenticación requerida",
-                    "requiere_auth": True
-                }), 403
-        
-        with estado_lock:
-            modo_anterior = estado_sistema['modo']
-            estado_sistema['modo'] = nuevo_modo
-            
-            if nuevo_modo == 'MANUAL':
-                estado_sistema['manual_relay1'] = estado_sistema['relay1']
-                estado_sistema['manual_relay2'] = estado_sistema['relay2']
-                estado_sistema['manual_relay3'] = estado_sistema['relay3']
-                estado_sistema['manual_relay4'] = estado_sistema['relay4']
-        
-        registrar_evento("MODO", f"Cambiado de {modo_anterior} a {nuevo_modo}")
-        
-        return jsonify({
-            "ok": True,
-            "modo": nuevo_modo,
-            "mensaje": f"Modo cambiado a {nuevo_modo}"
         })
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/control', methods=['POST'])
-def control_manual():
-    try:
-        if not verificar_admin_autenticado():
-            return jsonify({
-                "error": "Autenticación requerida",
-                "requiere_auth": True
-            }), 403
-        
-        data = request.json
-        relay = data.get('relay')
-        estado = data.get('estado')
-        
-        if relay not in ['relay1', 'relay2', 'relay3', 'relay4']:
-            return jsonify({"error": "Relay inválido"}), 400
-        
-        with estado_lock:
-            modo_actual = estado_sistema['modo']
-            
-            if modo_actual != 'MANUAL':
-                return jsonify({
-                    "error": "Control manual solo disponible en modo MANUAL",
-                    "modo_actual": modo_actual
-                }), 403
-            
-            estado_sistema[f'manual_{relay}'] = estado
-            estado_sistema[relay] = estado
-        
-        relay_nombres = {
-            'relay1': 'Ventilador',
-            'relay2': 'Alarma',
-            'relay3': 'Luz Pasillo (Zona A)',
-            'relay4': 'Luz Racks (Zona B)'
-        }
-        
-        registrar_evento("CONTROL", f"{relay_nombres[relay]} -> {'ON' if estado else 'OFF'} (Manual)")
-        
-        return jsonify({"ok": True, "relay": relay, "estado": estado})
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# === ENDPOINTS RNA ===
-
-@app.route('/api/rna/entrenar', methods=['POST'])
-def entrenar_red_neuronal():
-    try:
-        if not verificar_admin_autenticado():
-            return jsonify({
-                "error": "Autenticación requerida",
-                "requiere_auth": True
-            }), 403
-        
-        resultado = red_neuronal.entrenar(historial)
-        return jsonify(resultado)
-        
-    except Exception as e:
-        return jsonify({"success": False, "mensaje": str(e)}), 500
-
-@app.route('/api/rna/estado', methods=['GET'])
-def obtener_estado_rna():
-    return jsonify(red_neuronal.obtener_estado())
-
-@app.route('/api/rna/predecir', methods=['GET'])
-def predecir_temperatura():
-    try:
-        prediccion_simple = red_neuronal.predecir(historial)
-        predicciones_multiples = red_neuronal.predecir_multiples_pasos(historial, pasos=10)
-        temp_actual = estado_sistema['temperatura'] if historial else 0
-        
-        return jsonify({
-            'prediccion_siguiente': prediccion_simple,
-            'predicciones_futuras': predicciones_multiples,
-            'temperatura_actual': temp_actual,
-            'entrenado': red_neuronal.entrenado,
-            'confianza': red_neuronal.metricas.get('accuracy', 0)
-        })
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/rna/analisis-avanzado', methods=['GET'])
-def analisis_avanzado():
-    try:
-        if not red_neuronal.entrenado:
-            return jsonify({
-                "entrenado": False,
-                "mensaje": "Red neuronal no entrenada"
-            })
-        
-        prediccion_siguiente = red_neuronal.predecir(historial)
-        predicciones_futuras = red_neuronal.predecir_multiples_pasos(historial, pasos=15)
-        
-        if len(predicciones_futuras) > 0:
-            tendencia = "ascendente" if predicciones_futuras[-1] > predicciones_futuras[0] else "descendente"
-            delta_temp = predicciones_futuras[-1] - predicciones_futuras[0]
-        else:
-            tendencia = "estable"
-            delta_temp = 0
-        
-        recomendaciones = []
-        temp_actual = estado_sistema['temperatura']
-        
-        if prediccion_siguiente and prediccion_siguiente > 30:
-            recomendaciones.append({
-                'nivel': 'critico',
-                'mensaje': f'⚠️ La IA predice temperatura crítica de {prediccion_siguiente:.1f}°C',
-                'accion': 'Activar refrigeración preventiva'
-            })
-        elif prediccion_siguiente and prediccion_siguiente > 28:
-            recomendaciones.append({
-                'nivel': 'warning',
-                'mensaje': f'⚡ Temperatura aumentará a {prediccion_siguiente:.1f}°C',
-                'accion': 'Monitoreo continuo recomendado'
-            })
-        
-        if tendencia == "ascendente" and delta_temp > 2:
-            recomendaciones.append({
-                'nivel': 'info',
-                'mensaje': f'📈 Tendencia ascendente detectada (+{delta_temp:.1f}°C)',
-                'accion': 'Considerar ajuste de climatización'
-            })
-        
-        if prediccion_siguiente:
-            prob_alerta = min(100, max(0, (prediccion_siguiente - 25) * 20))
-        else:
-            prob_alerta = 0
-        
-        return jsonify({
-            'entrenado': True,
-            'prediccion_inmediata': prediccion_siguiente,
-            'predicciones_15min': predicciones_futuras,
-            'analisis': {
-                'tendencia': tendencia,
-                'delta_temperatura': round(delta_temp, 2),
-                'probabilidad_alerta': round(prob_alerta, 1),
-                'temperatura_actual': temp_actual,
-                'temperatura_maxima_predicha': max(predicciones_futuras) if predicciones_futuras else temp_actual
-            },
-            'recomendaciones': recomendaciones,
-            'metricas_modelo': {
-                'accuracy': red_neuronal.metricas.get('accuracy', 0),
-                'r2_score': red_neuronal.metricas.get('r2_score', 0),
-                'mse': red_neuronal.metricas.get('mse', 0)
-            }
-        })
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/grafico-datos', methods=['GET'])
 def obtener_datos_grafico():
+    """Datos para gráficos"""
     with estado_lock:
         if len(historial) == 0:
             return jsonify({"labels": [], "temperatura": [], "humedad": []})
         
-        datos = list(historial)[-50:]
-        
+        # Últimos 100 datos
+        datos = list(historial)[-100:]
         labels = [d['timestamp'].split(' ')[1] for d in datos]
         temperaturas = [d['temperatura'] for d in datos]
         humedades = [d['humedad'] for d in datos]
@@ -1000,271 +678,249 @@ def obtener_datos_grafico():
             "humedad": humedades
         })
 
+# ========== ENDPOINTS DE CONTROL ==========
+
+@app.route('/api/modo', methods=['POST'])
+def cambiar_modo():
+    """Cambiar entre modo AUTO y MANUAL"""
+    try:
+        data = request.json
+        nuevo_modo = data.get('modo', '').upper()
+        
+        if nuevo_modo not in ['AUTO', 'MANUAL']:
+            return jsonify({"error": "Modo inválido (debe ser AUTO o MANUAL)"}), 400
+        
+        # Verificar autenticación para modo MANUAL
+        if nuevo_modo == 'MANUAL' and not verificar_admin_autenticado():
+            return jsonify({"ok": False, "error": "Autenticación requerida", "requiere_auth": True}), 403
+        
+        with estado_lock:
+            modo_anterior = estado_sistema['modo']
+            estado_sistema['modo'] = nuevo_modo
+            
+            if nuevo_modo == 'MANUAL':
+                # Preservar estado actual al cambiar a manual
+                estado_sistema['manual_relay1'] = estado_sistema['relay1']
+                estado_sistema['manual_relay2'] = estado_sistema['relay2']
+                estado_sistema['manual_relay3'] = estado_sistema['relay3']
+                estado_sistema['manual_relay4'] = estado_sistema['relay4']
+            else:
+                # Al volver a AUTO, el MLP tomará control
+                pass
+        
+        registrar_evento("MODO", f"Cambiado de {modo_anterior} a {nuevo_modo}")
+        return jsonify({"ok": True, "modo": nuevo_modo})
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/control', methods=['POST'])
+def control_manual():
+    """Control manual de relés (requiere autenticación)"""
+    try:
+        if not verificar_admin_autenticado():
+            return jsonify({"error": "Autenticación requerida", "requiere_auth": True}), 403
+        
+        data = request.json
+        relay = data.get('relay')
+        estado = data.get('estado', False)
+        
+        if relay not in ['relay1', 'relay2', 'relay3', 'relay4']:
+            return jsonify({"error": "Relay inválido"}), 400
+        
+        with estado_lock:
+            if estado_sistema['modo'] != 'MANUAL':
+                return jsonify({"error": "Control manual solo disponible en modo MANUAL"}), 403
+            
+            # Actualizar estado manual
+            estado_sistema[f'manual_{relay}'] = estado
+            estado_sistema[relay] = estado
+        
+        registrar_evento("CONTROL", f"{relay} → {'ON' if estado else 'OFF'} (Manual)")
+        return jsonify({"ok": True, "relay": relay, "estado": estado})
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ========== ENDPOINTS MLP ==========
+
+@app.route('/api/mlp/entrenar', methods=['POST'])
+def entrenar_mlp():
+    """Entrenar la red neuronal MLP"""
+    if not verificar_admin_autenticado():
+        return jsonify({"error": "Autenticación requerida", "requiere_auth": True}), 403
+    
+    resultado = mlp.entrenar()
+    return jsonify(resultado)
+
+@app.route('/api/mlp/estado', methods=['GET'])
+def obtener_estado_mlp():
+    """Obtener estado y métricas del MLP"""
+    return jsonify(mlp.obtener_estado())
+
+@app.route('/api/mlp/predecir-manual', methods=['POST'])
+def predecir_manual():
+    """Realizar predicción manual con valores específicos"""
+    try:
+        data = request.json
+        temp = float(data.get('temperatura', 20))
+        hum = float(data.get('humedad', 60))
+        hora = float(data.get('hora', 12))
+        
+        resultado = mlp.predecir(temp, hum, hora)
+        
+        return jsonify({
+            'entradas': {'temperatura': temp, 'humedad': hum, 'hora': hora},
+            'salidas': resultado,
+            'entrenado': mlp.entrenado,
+            'arquitectura': mlp.metricas.get('architecture', 'N/A')
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+# ========== REPORTES ==========
+
 @app.route('/api/reporte/pdf', methods=['GET'])
 def generar_reporte_pdf():
-    """Genera un reporte PDF con los datos del sistema"""
+    """Generar reporte PDF del sistema"""
     try:
         buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=0.5*inch)
         elementos = []
         
-        # Estilos
         estilos = getSampleStyleSheet()
         estilo_titulo = ParagraphStyle(
-            'CustomTitle',
-            parent=estilos['Heading1'],
-            fontSize=24,
-            textColor=colors.HexColor('#1f6feb'),
-            spaceAfter=30,
+            'CustomTitle', 
+            parent=estilos['Heading1'], 
+            fontSize=24, 
+            textColor=colors.HexColor('#8250df'), 
+            spaceAfter=20, 
             alignment=TA_CENTER
         )
         
-        estilo_subtitulo = ParagraphStyle(
-            'CustomSubtitle',
-            parent=estilos['Heading2'],
-            fontSize=16,
-            textColor=colors.HexColor('#58a6ff'),
-            spaceAfter=12,
-            spaceBefore=12
-        )
-        
-        # Título del reporte
-        elementos.append(Paragraph("🛡️ GUARDIAN IoT", estilo_titulo))
-        elementos.append(Paragraph("Reporte de Monitoreo de Data Center", estilos['Heading2']))
+        # Título
+        elementos.append(Paragraph("🧠 SISTEMA MLP - CONTROL INTELIGENTE", estilo_titulo))
+        elementos.append(Paragraph("Reporte de Monitoreo con Red Neuronal", estilos['Heading2']))
         elementos.append(Spacer(1, 0.3*inch))
         
-        # Información general
+        # Fecha
         fecha_reporte = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         elementos.append(Paragraph(f"<b>Fecha del Reporte:</b> {fecha_reporte}", estilos['Normal']))
         elementos.append(Spacer(1, 0.2*inch))
         
+        # Tabla de datos actuales
         with estado_lock:
-            # Configuración de umbrales actual
-            elementos.append(Paragraph("⚙️ CONFIGURACIÓN DE UMBRALES", estilo_subtitulo))
-            
-            datos_config = [
-                ['Parámetro', 'Valor Configurado'],
-                ['Temperatura Alerta (Ventilador)', f"{config_umbrales['temp_alerta']}°C"],
-                ['Temperatura Crítica (Alarma)', f"{config_umbrales['temp_critica']}°C"],
-                ['Temperatura Extrema (Luz Racks)', f"{config_umbrales['temp_relay4']}°C"],
-                ['Humedad Baja', f"{config_umbrales['humedad_baja']}%"],
-                ['Humedad Alta (Luz Pasillo)', f"{config_umbrales['humedad_alta']}%"],
-                ['Humedad Crítica (Luz Racks)', f"{config_umbrales['humedad_critica']}%"],
-            ]
-            
-            tabla_config = Table(datos_config, colWidths=[4*inch, 3*inch])
-            tabla_config.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f0883e')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f6f8fa')),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#d0d7de'))
-            ]))
-            elementos.append(tabla_config)
-            elementos.append(Spacer(1, 0.3*inch))
-            
-            # KPIs principales
-            elementos.append(Paragraph("📊 RESUMEN EJECUTIVO", estilo_subtitulo))
-            
             datos_resumen = [
                 ['Métrica', 'Valor Actual', 'Máximo', 'Mínimo'],
-                ['Temperatura', f"{estado_sistema['temperatura']:.1f}°C", 
-                 f"{estado_sistema['temp_max_sesion']:.1f}°C", 
-                 f"{estado_sistema['temp_min_sesion']:.1f}°C"],
-                ['Humedad', f"{estado_sistema['humedad']:.1f}%", 
-                 f"{estado_sistema['hum_max_sesion']:.1f}%", 
-                 f"{estado_sistema['hum_min_sesion']:.1f}%"],
-                ['Alertas Totales', str(estado_sistema['total_alertas']), '-', '-'],
-                ['Ciclos Ventilador', str(estado_sistema['ciclos_ventilador']), '-', '-'],
+                ['Temperatura (°C)', f"{estado_sistema['temperatura']:.1f}", 
+                 f"{estado_sistema['temp_max_sesion']:.1f}", 
+                 f"{estado_sistema['temp_min_sesion']:.1f}"],
+                ['Humedad (%)', f"{estado_sistema['humedad']:.1f}", 
+                 f"{estado_sistema['hum_max_sesion']:.1f}", 
+                 f"{estado_sistema['hum_min_sesion']:.1f}"],
+                ['Modo', estado_sistema['modo'], '-', '-'],
+                ['Ciclos Motor', str(estado_sistema['ciclos_motor']), '-', '-']
             ]
             
-            tabla_resumen = Table(datos_resumen, colWidths=[2.5*inch, 1.5*inch, 1.5*inch, 1.5*inch])
+            tabla_resumen = Table(datos_resumen, colWidths=[2*inch, 1.8*inch, 1.8*inch, 1.8*inch])
             tabla_resumen.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f6feb')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f6f8fa')),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#d0d7de'))
-            ]))
-            elementos.append(tabla_resumen)
-            elementos.append(Spacer(1, 0.3*inch))
-            
-            # Estado de actuadores
-            elementos.append(Paragraph("🔌 ESTADO DE ACTUADORES", estilo_subtitulo))
-            
-            datos_actuadores = [
-                ['Actuador', 'Estado', 'Descripción'],
-                ['Relay 1 - Ventilador', '🟢 ON' if estado_sistema['relay1'] else '⚪ OFF', 
-                 f"Sistema de refrigeración (>{config_umbrales['temp_alerta']}°C)"],
-                ['Relay 2 - Alarma', '🔴 ON' if estado_sistema['relay2'] else '⚪ OFF', 
-                 f"Alarma crítica (>{config_umbrales['temp_critica']}°C)"],
-                ['Relay 3 - Luz Pasillo', '🟡 ON' if estado_sistema['relay3'] else '⚪ OFF', 
-                 f"Iluminación Zona A (≥{config_umbrales['humedad_alta']}% humedad)"],
-                ['Relay 4 - Luz Racks', '🟡 ON' if estado_sistema['relay4'] else '⚪ OFF', 
-                 f"Iluminación Zona B (emergencia ≥{config_umbrales['temp_relay4']}°C)"],
-            ]
-            
-            tabla_actuadores = Table(datos_actuadores, colWidths=[2.5*inch, 1.5*inch, 3*inch])
-            tabla_actuadores.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#238636')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 12),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f6f8fa')),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#d0d7de'))
-            ]))
-            elementos.append(tabla_actuadores)
-            elementos.append(Spacer(1, 0.3*inch))
-            
-            # Historial reciente (últimos 20 registros)
-            elementos.append(PageBreak())
-            elementos.append(Paragraph("📈 HISTORIAL DE LECTURAS (Últimos 20 registros)", estilo_subtitulo))
-            
-            datos_historial = [['Timestamp', 'Temp (°C)', 'Hum (%)', 'Ventilador', 'Alarma']]
-            
-            ultimos_registros = list(historial)[-20:] if len(historial) >= 20 else list(historial)
-            
-            for registro in ultimos_registros:
-                datos_historial.append([
-                    registro['timestamp'],
-                    f"{registro['temperatura']:.1f}",
-                    f"{registro['humedad']:.1f}",
-                    '✓' if registro.get('relay1', False) else '✗',
-                    '✓' if registro.get('relay2', False) else '✗'
-                ])
-            
-            tabla_historial = Table(datos_historial, colWidths=[2*inch, 1.2*inch, 1.2*inch, 1.2*inch, 1.2*inch])
-            tabla_historial.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#8250df')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 10),
-                ('FONTSIZE', (0, 1), (-1, -1), 8),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f6f8fa')),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
                 ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#d0d7de')),
                 ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f6f8fa')])
             ]))
-            elementos.append(tabla_historial)
-            elementos.append(Spacer(1, 0.3*inch))
-            
-            # Log de eventos recientes
-            elementos.append(Paragraph("📋 LOG DE EVENTOS RECIENTES", estilo_subtitulo))
-            
-            datos_log = [['Timestamp', 'Tipo', 'Mensaje']]
-            ultimos_eventos = list(log_eventos)[-15:] if len(log_eventos) >= 15 else list(log_eventos)
-            
-            for evento in ultimos_eventos:
-                datos_log.append([
-                    evento['timestamp'],
-                    evento['tipo'],
-                    evento['mensaje'][:50] + '...' if len(evento['mensaje']) > 50 else evento['mensaje']
-                ])
-            
-            tabla_log = Table(datos_log, colWidths=[2*inch, 1.5*inch, 3.5*inch])
-            tabla_log.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#da3633')),
+            elementos.append(tabla_resumen)
+        
+        elementos.append(Spacer(1, 0.3*inch))
+        
+        # Información MLP
+        elementos.append(Paragraph("<b>Red Neuronal MLP</b>", estilos['Heading3']))
+        if mlp.entrenado:
+            mlp_info = [
+                ['Parámetro', 'Valor'],
+                ['Arquitectura', mlp.metricas['architecture']],
+                ['Accuracy', f"{mlp.metricas['accuracy']}%"],
+                ['Muestras Entrenadas', str(mlp.metricas['samples_trained'])],
+                ['Iteraciones', str(mlp.metricas['iterations'])],
+                ['Tiempo Entrenamiento', f"{mlp.metricas['training_time']}s"]
+            ]
+            tabla_mlp = Table(mlp_info, colWidths=[3*inch, 3.5*inch])
+            tabla_mlp.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#8250df')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, 0), 10),
-                ('FONTSIZE', (0, 1), (-1, -1), 8),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f6f8fa')),
-                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#d0d7de'))
+                ('GRID', (0, 0), (-1, -1), 1, colors.grey)
             ]))
-            elementos.append(tabla_log)
-            
-            # Footer
-            elementos.append(Spacer(1, 0.5*inch))
-            elementos.append(Paragraph(
-                "Generado por Guardian IoT BMS | Sistema con Configuración Dinámica de Umbrales",
-                ParagraphStyle('Footer', parent=estilos['Normal'], fontSize=8, textColor=colors.grey, alignment=TA_CENTER)
-            ))
+            elementos.append(tabla_mlp)
         
-        # Construir PDF
         doc.build(elementos)
         buffer.seek(0)
         
-        # Crear respuesta
         response = make_response(buffer.getvalue())
         response.headers['Content-Type'] = 'application/pdf'
-        response.headers['Content-Disposition'] = f'attachment; filename=Guardian_IoT_Reporte_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.pdf'
-        
-        registrar_evento("REPORTE", "Reporte PDF generado exitosamente")
+        response.headers['Content-Disposition'] = f'attachment; filename=Reporte_MLP_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.pdf'
         
         return response
         
     except Exception as e:
-        registrar_evento("ERROR", f"Error generando PDF: {str(e)}")
+        print(f"Error generando PDF: {e}")
         return jsonify({"error": str(e)}), 500
 
-def generar_datos_semilla():
-    print("🌱 Generando datos semilla para la Red Neuronal...")
-    
-    base_time = datetime.datetime.now() - datetime.timedelta(hours=2)
-    
-    temp_base = 20.0
-    hum_base = 60.0
-    
-    for i in range(60):
-        temp = temp_base + (math.sin(i * 0.1) * 5) + random.uniform(-0.5, 0.5)
-        hum = hum_base + (math.cos(i * 0.1) * 10) + random.uniform(-1, 1)
-        relay1 = True if temp > 28 else False
-        timestamp = (base_time + datetime.timedelta(minutes=i*2)).strftime("%Y-%m-%d %H:%M:%S")
-        
-        historial.append({
-            "timestamp": timestamp,
-            "temperatura": round(temp, 2),
-            "humedad": round(hum, 2),
-            "relay1": relay1,
-            "relay2": False,
-            "relay3": False,
-            "relay4": False,
-            "modo": "AUTO"
-        })
-        
-    print(f"✅ Historial inicializado con {len(historial)} registros simulados.")
-    
-    print("🧠 Entrenando Red Neuronal inicial...")
-    resultado = red_neuronal.entrenar(historial)
-    if resultado['success']:
-        print(f"🚀 IA Lista: Accuracy={resultado['metricas']['accuracy']}%")
-    else:
-        print(f"⚠️ Error entrenando IA: {resultado['mensaje']}")
+# ========== FRONTEND ==========
 
-# === INICIALIZACIÓN ===
-try:
-    cargar_configuracion()  # Cargar umbrales al inicio
+@app.route('/')
+def home():
+    """Servir página principal"""
+    return send_from_directory('static', 'index.html')
+
+@app.route('/<path:path>')
+def static_files(path):
+    """Servir archivos estáticos"""
+    return send_from_directory('static', path)
+
+# ========== INICIALIZACIÓN ==========
+
+def inicializar_sistema():
+    """Inicializar todos los componentes del sistema"""
+    print("\n" + "="*70)
+    print("🧠 SISTEMA MLP - CONTROL INTELIGENTE CON RED NEURONAL")
+    print("="*70)
     
-    if not red_neuronal.entrenado:
-        print("⚡ Verificando estado inicial de IA...")
-        if not red_neuronal.cargar_modelo():
-            generar_datos_semilla()
-except Exception as e:
-    print(f"⚠️ Alerta: Error en carga inicial: {e}")
+    # Cargar configuración
+    cargar_configuracion()
+    
+    # Intentar cargar modelo pre-entrenado
+    if not mlp.cargar_modelo():
+        print("\n📦 Modelo MLP no encontrado. Entrenando desde cero...")
+        resultado = mlp.entrenar()
+        if resultado['success']:
+            print(f"✅ Modelo entrenado exitosamente")
+            print(f"   - Accuracy: {resultado['metricas']['accuracy']}%")
+            print(f"   - Tiempo: {resultado['metricas']['training_time']}s")
+        else:
+            print(f"❌ Error en entrenamiento: {resultado['mensaje']}")
+    else:
+        print(f"\n✅ Modelo MLP cargado correctamente")
+        print(f"   - Accuracy: {mlp.metricas['accuracy']}%")
+        print(f"   - Muestras: {mlp.metricas['samples_trained']}")
+    
+    print("\n" + "="*70)
+    print("📊 INFORMACIÓN DEL SERVIDOR")
+    print("="*70)
+    print(f"📡 Dashboard Web: http://localhost:5000")
+    print(f"🔌 API Endpoint: http://localhost:5000/api/telemetria")
+    print(f"🤖 Estado MLP: {'ENTRENADO ✅' if mlp.entrenado else 'NO ENTRENADO ⚠️'}")
+    print(f"⚙️ Modos: AUTO (MLP) + MANUAL")
+    print(f"🔑 Credenciales Admin: usuario='admin' / password='admin123'")
+    print("="*70)
+    print("\n🚀 Sistema listo. Esperando conexiones...\n")
+    
+    registrar_evento("SISTEMA", "Servidor Flask iniciado correctamente")
 
 if __name__ == '__main__':
-    registrar_evento("SISTEMA", "Servidor iniciado con configuración dinámica de umbrales")
-    
-    if not red_neuronal.cargar_modelo():
-        generar_datos_semilla()
-    
-    print("\n" + "="*60)
-    print("🚀 SERVIDOR GUARDIAN IoT INICIADO")
-    print("="*60)
-    print(f"📡 Dashboard: http://localhost:5000")
-    print(f"🧠 Estado IA: {'ENTRENADA ✅' if red_neuronal.entrenado else 'ESPERANDO DATOS ⏳'}")
-    print(f"⚙️ Configuración: {CONFIG_FILE}")
-    print("="*60 + "\n")
-    
-    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
+    inicializar_sistema()
+    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True, use_reloader=False
