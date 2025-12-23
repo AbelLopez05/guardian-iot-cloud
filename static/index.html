@@ -339,6 +339,191 @@
             font-size: 0.9em;
         }
 
+        /* ========== ESTILOS PARA KPIs Y DIAGRAMAS MLP ========== */
+        
+        .mlp-analytics-section {
+            background: linear-gradient(145deg, #161b22 0%, #0d1117 100%);
+            border: 2px solid #8250df;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 0 30px rgba(130, 80, 223, 0.3);
+        }
+
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .kpi-card {
+            background: rgba(22, 27, 34, 0.6);
+            border: 2px solid #30363d;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            transition: all 0.3s;
+        }
+
+        .kpi-card:hover {
+            transform: translateY(-5px);
+            border-color: #8250df;
+            box-shadow: 0 0 20px rgba(130, 80, 223, 0.4);
+        }
+
+        .kpi-label {
+            color: #8b949e;
+            font-size: 0.85em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .kpi-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            background: linear-gradient(135deg, #8250df, #6e40c9);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin: 10px 0;
+        }
+
+        .kpi-subtitle {
+            color: #58a6ff;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        .architecture-diagram {
+            background: rgba(22, 27, 34, 0.4);
+            border: 2px solid #30363d;
+            border-radius: 10px;
+            padding: 25px;
+            margin: 20px 0;
+        }
+
+        .layer-visualization {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .layer {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .layer-title {
+            color: #58a6ff;
+            font-weight: bold;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+
+        .neuron-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .neuron {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #8250df, #6e40c9);
+            box-shadow: 0 0 15px rgba(130, 80, 223, 0.6);
+            animation: pulse-neuron 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse-neuron {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.1); opacity: 0.8; }
+        }
+
+        .layer-arrow {
+            font-size: 2em;
+            color: #58a6ff;
+        }
+
+        .prediction-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            background: rgba(22, 27, 34, 0.6);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .prediction-table th {
+            background: #8250df;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-size: 0.9em;
+        }
+
+        .prediction-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #30363d;
+            color: #c9d1d9;
+            font-size: 0.85em;
+        }
+
+        .prediction-table tr:hover {
+            background: rgba(130, 80, 223, 0.1);
+        }
+
+        .relay-indicator {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8em;
+            font-weight: bold;
+        }
+
+        .relay-indicator.on {
+            background: #238636;
+            color: white;
+        }
+
+        .relay-indicator.off {
+            background: #21262d;
+            color: #8b949e;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 25px;
+            background: #21262d;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-top: 10px;
+            border: 2px solid #30363d;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #238636, #2ea043);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 0.85em;
+            transition: width 0.5s ease;
+        }
+
+        .chart-container-small {
+            position: relative;
+            height: 250px;
+            margin: 15px 0;
+        }
+
         .info-box strong {
             color: #58a6ff;
         }
@@ -794,6 +979,144 @@
                 <canvas id="chartComparativo"></canvas>
             </div>
         </div>
+        <!-- ========== SECCIÓN MLP ANALYTICS ========== -->
+        <div class="mlp-analytics-section">
+            <h2 class="section-title" style="margin-top: 0; border-color: #8250df;">🧠 Análisis Detallado de la Red Neuronal MLP</h2>
+            
+            <!-- KPIs Principales -->
+            <div class="kpi-grid" id="mlpKpisGrid">
+                <div class="kpi-card">
+                    <div class="kpi-label">🎯 Accuracy</div>
+                    <div class="kpi-value"><span id="kpi-accuracy">--</span><span style="font-size: 0.5em;">%</span></div>
+                    <div class="kpi-subtitle">Precisión del Modelo</div>
+                </div>
+                
+                <div class="kpi-card">
+                    <div class="kpi-label">📊 Muestras</div>
+                    <div class="kpi-value" id="kpi-samples">--</div>
+                    <div class="kpi-subtitle">Dataset de Entrenamiento</div>
+                </div>
+                
+                <div class="kpi-card">
+                    <div class="kpi-label">🔄 Iteraciones</div>
+                    <div class="kpi-value" id="kpi-iterations">--</div>
+                    <div class="kpi-subtitle">Ciclos de Aprendizaje</div>
+                </div>
+                
+                <div class="kpi-card">
+                    <div class="kpi-label">⚙️ Parámetros</div>
+                    <div class="kpi-value" id="kpi-parameters">--</div>
+                    <div class="kpi-subtitle">Pesos Neuronales</div>
+                </div>
+            </div>
+
+            <!-- Arquitectura Visual -->
+            <div class="architecture-diagram">
+                <h3 style="color: #58a6ff; margin-bottom: 20px; text-align: center;">🏗️ Arquitectura de la Red Neuronal</h3>
+                
+                <div class="layer-visualization">
+                    <div class="layer">
+                        <div class="layer-title">ENTRADA</div>
+                        <div class="neuron-group">
+                            <div class="neuron" title="Temperatura"></div>
+                            <div class="neuron" title="Humedad"></div>
+                            <div class="neuron" title="Hora"></div>
+                        </div>
+                        <small style="color: #8b949e;">3 neuronas</small>
+                    </div>
+
+                    <div class="layer-arrow">→</div>
+
+                    <div class="layer">
+                        <div class="layer-title">CAPA OCULTA 1</div>
+                        <div class="neuron-group" id="layer1Neurons">
+                            <!-- Se generarán 32 neuronas con JS -->
+                        </div>
+                        <small style="color: #8b949e;">32 neuronas (ReLU)</small>
+                    </div>
+
+                    <div class="layer-arrow">→</div>
+
+                    <div class="layer">
+                        <div class="layer-title">CAPA OCULTA 2</div>
+                        <div class="neuron-group" id="layer2Neurons">
+                            <!-- Se generarán 16 neuronas con JS -->
+                        </div>
+                        <small style="color: #8b949e;">16 neuronas (ReLU)</small>
+                    </div>
+
+                    <div class="layer-arrow">→</div>
+
+                    <div class="layer">
+                        <div class="layer-title">CAPA OCULTA 3</div>
+                        <div class="neuron-group" id="layer3Neurons">
+                            <!-- Se generarán 8 neuronas con JS -->
+                        </div>
+                        <small style="color: #8b949e;">8 neuronas (ReLU)</small>
+                    </div>
+
+                    <div class="layer-arrow">→</div>
+
+                    <div class="layer">
+                        <div class="layer-title">SALIDA</div>
+                        <div class="neuron-group">
+                            <div class="neuron" title="Relay 1" style="background: linear-gradient(135deg, #238636, #2ea043);"></div>
+                            <div class="neuron" title="Relay 2" style="background: linear-gradient(135deg, #58a6ff, #388bfd);"></div>
+                            <div class="neuron" title="Relay 3" style="background: linear-gradient(135deg, #d29922, #f0883e);"></div>
+                            <div class="neuron" title="Relay 4" style="background: linear-gradient(135deg, #da3633, #f85149);"></div>
+                        </div>
+                        <small style="color: #8b949e;">4 relés</small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gráficos de Distribución -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; margin-top: 30px;">
+                <div class="chart-card">
+                    <h3 style="color: #58a6ff; font-size: 1.1em; margin-bottom: 15px;">📊 Distribución Dataset ON/OFF</h3>
+                    <div class="chart-container-small">
+                        <canvas id="chartDatasetDistribution"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <h3 style="color: #58a6ff; font-size: 1.1em; margin-bottom: 15px;">🔢 Activaciones por Relay</h3>
+                    <div class="chart-container-small">
+                        <canvas id="chartRelayActivations"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-card">
+                    <h3 style="color: #58a6ff; font-size: 1.1em; margin-bottom: 15px;">⚡ Activaciones Simultáneas</h3>
+                    <div class="chart-container-small">
+                        <canvas id="chartSimultaneous"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tabla de Predicciones Recientes -->
+            <h3 style="color: #58a6ff; margin-top: 30px; margin-bottom: 15px;">📋 Últimas 10 Predicciones del MLP</h3>
+            <div style="overflow-x: auto;">
+                <table class="prediction-table" id="predictionsTable">
+                    <thead>
+                        <tr>
+                            <th>⏰ Hora</th>
+                            <th>🌡️ Temp</th>
+                            <th>💧 Hum</th>
+                            <th>🔧 R1</th>
+                            <th>💡 R2</th>
+                            <th>💡 R3</th>
+                            <th>🔌 R4</th>
+                            <th>📊 Total Activos</th>
+                            <th>🎮 Modo</th>
+                        </tr>
+                    </thead>
+                    <tbody id="predictionsTableBody">
+                        <tr><td colspan="9" style="text-align: center; color: #8b949e;">Cargando predicciones...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -803,6 +1126,8 @@
         let estadosManuales = { relay1: false, relay2: false, relay3: false, relay4: false };
         let adminAutenticado = false;
         let chartComparativo;
+        let chartDatasetDist, chartRelayAct, chartSimultaneous;
+        let mlpMetricasDetalladas = null;
         let horariosActuales = {};
 
         // ========== FUNCIONES DE HORARIOS ==========
@@ -1381,6 +1706,184 @@
                 }
             });
         }
+        // ========== FUNCIONES PARA MLP ANALYTICS ==========
+
+        function inicializarGraficosMLPAnalytics() {
+            // Gráfico de Distribución Dataset
+            chartDatasetDist = new Chart(document.getElementById('chartDatasetDistribution'), {
+                type: 'doughnut',
+                data: {
+                    labels: ['Muestras ON', 'Muestras OFF'],
+                    datasets: [{
+                        data: [0, 0],
+                        backgroundColor: ['#238636', '#da3633'],
+                        borderWidth: 2,
+                        borderColor: '#0d1117'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#c9d1d9', font: { size: 11 } }
+                        }
+                    }
+                }
+            });
+
+            // Gráfico de Activaciones por Relay
+            chartRelayAct = new Chart(document.getElementById('chartRelayActivations'), {
+                type: 'bar',
+                data: {
+                    labels: ['Relay 1', 'Relay 2', 'Relay 3', 'Relay 4'],
+                    datasets: [{
+                        label: 'Activaciones (%)',
+                        data: [0, 0, 0, 0],
+                        backgroundColor: ['#238636', '#58a6ff', '#d29922', '#da3633'],
+                        borderWidth: 2,
+                        borderColor: '#0d1117'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#8b949e' }, grid: { color: '#30363d' } },
+                        y: { 
+                            ticks: { color: '#8b949e' }, 
+                            grid: { color: '#30363d' },
+                            beginAtZero: true,
+                            max: 100
+                        }
+                    }
+                }
+            });
+
+            // Gráfico de Activaciones Simultáneas
+            chartSimultaneous = new Chart(document.getElementById('chartSimultaneous'), {
+                type: 'bar',
+                data: {
+                    labels: ['0 Activos', '1 Activo', '2 Activos', '3 Activos', '4 Activos'],
+                    datasets: [{
+                        label: 'Cantidad de Muestras',
+                        data: [0, 0, 0, 0, 0],
+                        backgroundColor: '#8250df',
+                        borderWidth: 2,
+                        borderColor: '#0d1117'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { ticks: { color: '#8b949e' }, grid: { color: '#30363d' } },
+                        y: { ticks: { color: '#8b949e' }, grid: { color: '#30363d' }, beginAtZero: true }
+                    }
+                }
+            });
+        }
+
+        async function actualizarMLPAnalytics() {
+            try {
+                const response = await fetch('/api/mlp/metricas-detalladas');
+                const data = await response.json();
+
+                if (!data.entrenado) {
+                    console.log('MLP no entrenado aún');
+                    return;
+                }
+
+                mlpMetricasDetalladas = data;
+
+                // Actualizar KPIs
+                document.getElementById('kpi-accuracy').textContent = data.metricas_generales.accuracy.toFixed(1);
+                document.getElementById('kpi-samples').textContent = data.dataset.total_muestras;
+                document.getElementById('kpi-iterations').textContent = data.metricas_generales.iterations;
+                document.getElementById('kpi-parameters').textContent = data.arquitectura.total_parametros.toLocaleString();
+
+                // Actualizar gráfico de distribución ON/OFF
+                chartDatasetDist.data.datasets[0].data = [
+                    data.dataset.muestras_on,
+                    data.dataset.muestras_off
+                ];
+                chartDatasetDist.update('none');
+
+                // Actualizar gráfico de activaciones por relay
+                const porcentajes = data.activaciones_por_relay.map(r => r.porcentaje);
+                chartRelayAct.data.datasets[0].data = porcentajes;
+                chartRelayAct.update('none');
+
+                // Actualizar gráfico de activaciones simultáneas
+                const simultaneas = data.distribucion_simultaneas;
+                chartSimultaneous.data.datasets[0].data = [
+                    simultaneas['0_activos'].count,
+                    simultaneas['1_activos'].count,
+                    simultaneas['2_activos'].count,
+                    simultaneas['3_activos'].count,
+                    simultaneas['4_activos'].count
+                ];
+                chartSimultaneous.update('none');
+
+            } catch (error) {
+                console.error('Error actualizando MLP Analytics:', error);
+            }
+        }
+
+        async function actualizarTablaPrediciones() {
+            try {
+                const response = await fetch('/api/historial-predicciones');
+                const data = await response.json();
+
+                const tbody = document.getElementById('predictionsTableBody');
+                
+                if (data.predicciones.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: #8b949e;">No hay predicciones aún</td></tr>';
+                    return;
+                }
+
+                // Mostrar últimas 10
+                const ultimas10 = data.predicciones.slice(-10).reverse();
+
+                tbody.innerHTML = ultimas10.map(pred => `
+                    <tr>
+                        <td>${pred.hora_legible}</td>
+                        <td>${pred.temperatura}°C</td>
+                        <td>${pred.humedad}%</td>
+                        <td><span class="relay-indicator ${pred.relay1 ? 'on' : 'off'}">${pred.relay1 ? 'ON' : 'OFF'}</span></td>
+                        <td><span class="relay-indicator ${pred.relay2 ? 'on' : 'off'}">${pred.relay2 ? 'ON' : 'OFF'}</span></td>
+                        <td><span class="relay-indicator ${pred.relay3 ? 'on' : 'off'}">${pred.relay3 ? 'ON' : 'OFF'}</span></td>
+                        <td><span class="relay-indicator ${pred.relay4 ? 'on' : 'off'}">${pred.relay4 ? 'ON' : 'OFF'}</span></td>
+                        <td style="text-align: center; font-weight: bold; color: #58a6ff;">${pred.total_activos}</td>
+                        <td><span style="color: ${pred.modo === 'AUTO' ? '#238636' : '#d29922'};">${pred.modo}</span></td>
+                    </tr>
+                `).join('');
+
+            } catch (error) {
+                console.error('Error actualizando tabla de predicciones:', error);
+            }
+        }
+
+        function generarNeuronasVisuales(containerId, cantidad) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            
+            // Mostrar solo una representación visual (máximo 8 neuronas visibles)
+            const neuronasVisibles = Math.min(cantidad, 8);
+            
+            for (let i = 0; i < neuronasVisibles; i++) {
+                const neuron = document.createElement('div');
+                neuron.className = 'neuron';
+                neuron.style.animationDelay = `${i * 0.1}s`;
+                container.appendChild(neuron);
+            }
+        }
 
         function actualizarGraficos() {
             fetch('/api/grafico-datos')
@@ -1400,6 +1903,13 @@
             console.log('%cDashboard con Horarios Configurables', 'color: #2ea043; font-size: 14px;');
             
             inicializarGraficos();
+            // Inicializar visualización de neuronas
+            generarNeuronasVisuales('layer1Neurons', 8);
+            generarNeuronasVisuales('layer2Neurons', 6);
+            generarNeuronasVisuales('layer3Neurons', 4);
+            
+            // Inicializar gráficos de MLP Analytics
+            inicializarGraficosMLPAnalytics();
             verificarSesionActiva();
             cargarHorarios();
             
@@ -1410,6 +1920,12 @@
             setInterval(actualizarDashboard, 2000);
             setInterval(actualizarGraficos, 5000);
             setInterval(actualizarEstadoMLP, 10000);
+            setInterval(actualizarMLPAnalytics, 15000);  // Actualizar cada 15 segundos
+            setInterval(actualizarTablaPrediciones, 5000);  // Actualizar cada 5 segundos
+            
+            // Actualización inicial
+            actualizarMLPAnalytics();
+            actualizarTablaPrediciones();
             
             console.log('✅ Dashboard inicializado correctamente');
         });
