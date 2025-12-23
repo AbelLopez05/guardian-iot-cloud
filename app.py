@@ -172,8 +172,11 @@ estado_lock = threading.Lock()
 sesiones_admin = {}
 
 def registrar_evento(tipo, mensaje):
+    # Usamos la nueva función para que el log salga con hora Perú
+    fecha_peru = obtener_hora_actual_peru().strftime("%Y-%m-%d %H:%M:%S")
+    
     evento = {
-        "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "timestamp": fecha_peru,
         "tipo": tipo,
         "mensaje": mensaje
     }
