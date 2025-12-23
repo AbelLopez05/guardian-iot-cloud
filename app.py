@@ -38,20 +38,20 @@ HORARIOS_FILE = "horarios_config.json"
 
 config_umbrales = {
     "usar_mlp": True,
-    "modo_debug": True,
+    "modo_debug": True,  # ✅ SIEMPRE ACTIVO para diagnóstico
     "temp_alerta": 25.0,
     "temp_critica": 31.0,
     "humedad_baja": 30.0,
     "humedad_alta": 85.0
 }
 
-# === ✅ CONFIGURACIÓN INICIAL (valores por defecto del proyecto) ===
+# === ✅ CONFIGURACIÓN INICIAL ===
 horarios_config = {
     "relay1": {
         "nombre": "Motor AC",
         "habilitado": True,
-        "hora_inicio": 17.0,          # 17:00 (5:00 PM)
-        "hora_fin": 17.0 + (20/60),   # 17:20 (5:20 PM)
+        "hora_inicio": 17.0,
+        "hora_fin": 17.0 + (20/60),
         "temp_min": 15.0,
         "temp_max": 18.0,
         "hum_min": 80.0,
@@ -60,8 +60,8 @@ horarios_config = {
     "relay2": {
         "nombre": "Foco 1",
         "habilitado": True,
-        "hora_inicio": 17.5,          # 17:30 (5:30 PM)
-        "hora_fin": 18.0,             # 18:00 (6:00 PM)
+        "hora_inicio": 17.5,
+        "hora_fin": 18.0,
         "temp_min": 18.0,
         "temp_max": 20.0,
         "hum_min": 90.0,
@@ -70,8 +70,8 @@ horarios_config = {
     "relay3": {
         "nombre": "Foco 2",
         "habilitado": True,
-        "hora_inicio": 17.5,          # 17:30 (5:30 PM)
-        "hora_fin": 18.0,             # 18:00 (6:00 PM)
+        "hora_inicio": 17.5,
+        "hora_fin": 18.0,
         "temp_min": 20.0,
         "temp_max": 25.0,
         "hum_min": 80.0,
@@ -163,7 +163,8 @@ estado_sistema = {
     "total_alertas": 0,
     "ciclos_motor": 0,
     "tiempo_motor_on": 0,
-    "uptime_sistema": 0
+    "uptime_sistema": 0,
+    "diagnostico": ""  # ✅ NUEVO: para mostrar por qué no se activa
 }
 
 historial = deque(maxlen=500)
@@ -180,7 +181,7 @@ def registrar_evento(tipo, mensaje):
     log_eventos.append(evento)
     print(f"[{tipo}] {mensaje}")
 
-# ========== RED NEURONAL MLP MEJORADA ==========
+# ========== RED NEURONAL MLP CON DIAGNÓSTICO ==========
 
 class RedNeuronalMLP:
     def __init__(self):
@@ -224,7 +225,6 @@ class RedNeuronalMLP:
         
         relays_activos = 0
         
-        # Generar datos para cada relay configurado
         for relay_key in ['relay1', 'relay2', 'relay3', 'relay4']:
             config = horarios_config[relay_key]
             
@@ -235,7 +235,6 @@ class RedNeuronalMLP:
             relays_activos += 1
             relay_index = int(relay_key[-1]) - 1
             
-            # Mostrar configuración
             h_ini = config['hora_inicio']
             h_fin = config['hora_fin']
             h_ini_str = f"{int(h_ini):02d}:{int((h_ini%1)*60):02d}"
@@ -263,18 +262,16 @@ class RedNeuronalMLP:
         if relays_activos == 0:
             print("\n⚠️  ADVERTENCIA: No hay relays habilitados!")
             print("   Generando dataset mínimo...")
-            # Dataset mínimo de seguridad
             for _ in range(100):
                 X.append([np.random.uniform(15, 25), np.random.uniform(60, 90), np.random.uniform(0, 24)])
                 y.append([0, 0, 0, 0])
         
-        # Generar casos OFF (proporción balanceada)
+        # Generar casos OFF
         num_muestras_off = max(400, relays_activos * 200)
         print(f"\n🔴 CASOS OFF (todo apagado)")
         print(f"   Generando {num_muestras_off} muestras negativas...")
         
         for _ in range(num_muestras_off):
-            # Temperatura fuera de todos los rangos
             temp = np.random.choice([
                 np.random.uniform(5, 14),
                 np.random.uniform(26, 40)
@@ -282,7 +279,6 @@ class RedNeuronalMLP:
             
             hum = np.random.uniform(10, 100)
             
-            # Hora fuera de todos los rangos configurados
             todas_horas = []
             for relay_key in ['relay1', 'relay2', 'relay3', 'relay4']:
                 if horarios_config[relay_key]['habilitado']:
@@ -328,7 +324,6 @@ class RedNeuronalMLP:
             if len(X) == 0:
                 raise Exception("Dataset vacío. Configura al menos un relay.")
             
-            # Escalar datos
             X_scaled = self.scaler.fit_transform(X)
             
             print("⚙️  INICIANDO ENTRENAMIENTO...")
@@ -341,7 +336,6 @@ class RedNeuronalMLP:
             self.modelo.fit(X_scaled, y)
             tiempo_entrenamiento = time.time() - inicio
             
-            # Evaluar accuracy
             y_pred = self.modelo.predict(X_scaled)
             accuracy = np.mean([np.array_equal(a, b) for a, b in zip(y_pred, y)]) * 100
             
@@ -385,10 +379,10 @@ class RedNeuronalMLP:
             }
     
     def predecir(self, temperatura, humedad, hora):
-        """✅ Predicción mejorada con logging detallado"""
+        """✅ Predicción con DIAGNÓSTICO DETALLADO"""
         if not self.entrenado:
             registrar_evento("WARNING", "MLP no entrenado, retornando estado seguro")
-            return {'relay1': False, 'relay2': False, 'relay3': False, 'relay4': False}
+            return {'relay1': False, 'relay2': False, 'relay3': False, 'relay4': False}, "❌ MLP NO ENTRENADO"
         
         try:
             X = np.array([[temperatura, humedad, hora]])
@@ -396,7 +390,6 @@ class RedNeuronalMLP:
             
             prediccion_raw = self.modelo.predict(X_scaled)[0]
             
-            # Umbral de confianza: 0.5
             UMBRAL = 0.5
             prediccion = [1 if x >= UMBRAL else 0 for x in prediccion_raw]
             
@@ -407,20 +400,59 @@ class RedNeuronalMLP:
                 'relay4': bool(prediccion[3])
             }
             
-            if config_umbrales.get('modo_debug', False):
-                h = int(hora)
-                m = int((hora % 1) * 60)
-                print(f"\n🤖 MLP PREDICCIÓN [{h:02d}:{m:02d}]")
-                print(f"   📊 Entrada: T={temperatura:.1f}°C  H={humedad:.1f}%  Hora={hora:.2f}")
-                print(f"   🧠 Salida: [{prediccion_raw[0]:.3f}, {prediccion_raw[1]:.3f}, {prediccion_raw[2]:.3f}, {prediccion_raw[3]:.3f}]")
-                print(f"   ✅ Decisión: R1={resultado['relay1']}  R2={resultado['relay2']}  R3={resultado['relay3']}  R4={resultado['relay4']}")
+            # ✅ DIAGNÓSTICO DETALLADO
+            h = int(hora)
+            m = int((hora % 1) * 60)
+            diagnostico = f"\n{'='*70}\n"
+            diagnostico += f"🤖 MLP PREDICCIÓN [{h:02d}:{m:02d}]\n"
+            diagnostico += f"{'='*70}\n"
+            diagnostico += f"📊 ENTRADA:\n"
+            diagnostico += f"   • Temperatura: {temperatura:.1f}°C\n"
+            diagnostico += f"   • Humedad: {humedad:.1f}%\n"
+            diagnostico += f"   • Hora: {hora:.2f} ({h:02d}:{m:02d})\n\n"
             
-            return resultado
+            diagnostico += f"🧠 SALIDA RAW (antes del umbral):\n"
+            diagnostico += f"   • R1 (Motor AC): {prediccion_raw[0]:.4f} {'✅ ACTIVA' if prediccion_raw[0] >= UMBRAL else '❌ NO ACTIVA'}\n"
+            diagnostico += f"   • R2 (Foco 1):   {prediccion_raw[1]:.4f} {'✅ ACTIVA' if prediccion_raw[1] >= UMBRAL else '❌ NO ACTIVA'}\n"
+            diagnostico += f"   • R3 (Foco 2):   {prediccion_raw[2]:.4f} {'✅ ACTIVA' if prediccion_raw[2] >= UMBRAL else '❌ NO ACTIVA'}\n"
+            diagnostico += f"   • R4 (Reserva):  {prediccion_raw[3]:.4f} {'✅ ACTIVA' if prediccion_raw[3] >= UMBRAL else '❌ NO ACTIVA'}\n\n"
+            
+            diagnostico += f"📋 VERIFICACIÓN DE CONDICIONES CONFIGURADAS:\n"
+            
+            for relay_key in ['relay1', 'relay2', 'relay3', 'relay4']:
+                config = horarios_config[relay_key]
+                if not config['habilitado']:
+                    diagnostico += f"\n   ⚪ {config['nombre']}: DESHABILITADO\n"
+                    continue
+                
+                h_ini = config['hora_inicio']
+                h_fin = config['hora_fin']
+                
+                cumple_hora = h_ini <= hora <= h_fin
+                cumple_temp = config['temp_min'] <= temperatura <= config['temp_max']
+                cumple_hum = config['hum_min'] <= humedad <= config['hum_max']
+                
+                diagnostico += f"\n   {'✅' if cumple_hora and cumple_temp and cumple_hum else '❌'} {config['nombre']}:\n"
+                diagnostico += f"      Horario: {int(h_ini):02d}:{int((h_ini%1)*60):02d} - {int(h_fin):02d}:{int((h_fin%1)*60):02d} "
+                diagnostico += f"{'✅' if cumple_hora else '❌ FUERA'}\n"
+                diagnostico += f"      Temp: {config['temp_min']:.1f}-{config['temp_max']:.1f}°C "
+                diagnostico += f"{'✅' if cumple_temp else f'❌ ({temperatura:.1f}°C)'}\n"
+                diagnostico += f"      Hum: {config['hum_min']:.1f}-{config['hum_max']:.1f}% "
+                diagnostico += f"{'✅' if cumple_hum else f'❌ ({humedad:.1f}%)'}\n"
+            
+            diagnostico += f"\n{'='*70}\n"
+            diagnostico += f"✅ DECISIÓN FINAL: R1={resultado['relay1']}  R2={resultado['relay2']}  R3={resultado['relay3']}  R4={resultado['relay4']}\n"
+            diagnostico += f"{'='*70}\n"
+            
+            print(diagnostico)
+            
+            return resultado, diagnostico
             
         except Exception as e:
-            print(f"❌ Error en predicción MLP: {e}")
+            error_msg = f"❌ Error en predicción MLP: {e}"
+            print(error_msg)
             registrar_evento("ERROR", f"Error en predicción: {str(e)}")
-            return {'relay1': False, 'relay2': False, 'relay3': False, 'relay4': False}
+            return {'relay1': False, 'relay2': False, 'relay3': False, 'relay4': False}, error_msg
     
     def obtener_estado(self):
         return {
