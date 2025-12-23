@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sistema MLP - Control Inteligente</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Plugin para Gauges/Indicadores tipo reloj -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
@@ -991,6 +993,38 @@
             .grid { grid-template-columns: 1fr; }
             .relay-config-grid { grid-template-columns: 1fr; }
         }
+        /* ========== ESTILOS PARA GAUGES/INDICADORES ========== */
+
+        .gauge-container {
+            position: relative;
+            width: 100%;
+            max-width: 250px;
+            height: 250px;
+            margin: 20px auto;
+        }
+
+        .gauge-value {
+            text-align: center;
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #58a6ff;
+            margin-top: -30px;
+            text-shadow: 0 0 10px rgba(88, 166, 255, 0.5);
+        }
+
+        /* Animación para los gauges */
+        @keyframes gauge-pulse {
+            0%, 100% { 
+                filter: drop-shadow(0 0 5px rgba(88, 166, 255, 0.3));
+            }
+            50% { 
+                filter: drop-shadow(0 0 15px rgba(88, 166, 255, 0.8));
+            }
+        }
+
+        .gauge-container canvas {
+            animation: gauge-pulse 3s ease-in-out infinite;
+        }
     </style>
 </head>
 <body>
@@ -1101,26 +1135,31 @@
 
         <!-- SENSORES -->
         <h2 class="section-title">📊 Lecturas de Sensores en Tiempo Real</h2>
+
         <div class="grid">
+    
             <div class="card">
                 <div class="lbl">🌡️ TEMPERATURA</div>
-                <div class="val">
-                    <span id="temp">--</span><span class="unit">°C</span>
+                <div class="gauge-container">
+                    <canvas id="gaugeTemp"></canvas>
                 </div>
+                <div class="gauge-value" id="tempValue">-- °C</div>
             </div>
-            
+    
             <div class="card">
                 <div class="lbl">💧 HUMEDAD RELATIVA</div>
-                <div class="val">
-                    <span id="hum">--</span><span class="unit">%</span>
+                <div class="gauge-container">
+                    <canvas id="gaugeHum"></canvas>
                 </div>
+                <div class="gauge-value" id="humValue">-- %</div>
             </div>
 
             <div class="card">
                 <div class="lbl">⏰ HORA ACTUAL</div>
-                <div class="val" style="font-size: 2.5em;">
-                    <span id="hora">--:--</span>
+                <div class="gauge-container">
+                    <canvas id="gaugeHora"></canvas>
                 </div>
+                <div class="gauge-value" id="horaValue">--:--</div>
             </div>
         </div>
 
@@ -1913,6 +1952,7 @@
                 }
             });
         }
+        
         // ========== FUNCIONES PARA MLP ANALYTICS ==========
 
         function inicializarGraficosMLPAnalytics() {
