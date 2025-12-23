@@ -171,6 +171,17 @@ log_eventos = deque(maxlen=200)
 estado_lock = threading.Lock()
 sesiones_admin = {}
 
+# ========== CORRECCIÓN DE HORA (PERÚ UTC-5) ==========
+def obtener_hora_actual_peru():
+    """Devuelve la fecha y hora exacta ajustada a Perú"""
+    # Obtenemos la hora UTC del servidor y restamos 5 horas
+    return datetime.datetime.utcnow() - datetime.timedelta(hours=5)
+
+def obtener_hora_decimal():
+    """Devuelve la hora en formato decimal (ej: 17.5) ajustada a Perú"""
+    ahora = obtener_hora_actual_peru()
+    return ahora.hour + ahora.minute / 60.0
+
 def registrar_evento(tipo, mensaje):
     # Usamos la nueva función para que el log salga con hora Perú
     fecha_peru = obtener_hora_actual_peru().strftime("%Y-%m-%d %H:%M:%S")
@@ -648,17 +659,6 @@ class RedNeuronalMLP:
 mlp = RedNeuronalMLP()
 
 # ========== FUNCIONES AUXILIARES ==========
-
-# ========== CORRECCIÓN DE HORA (PERÚ UTC-5) ==========
-def obtener_hora_actual_peru():
-    """Devuelve la fecha y hora exacta ajustada a Perú"""
-    # Obtenemos la hora UTC del servidor y restamos 5 horas
-    return datetime.datetime.utcnow() - datetime.timedelta(hours=5)
-
-def obtener_hora_decimal():
-    """Devuelve la hora en formato decimal (ej: 17.5) ajustada a Perú"""
-    ahora = obtener_hora_actual_peru()
-    return ahora.hour + ahora.minute / 60.0
 
 def verificar_timeout():
     while True:
