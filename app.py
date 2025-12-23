@@ -666,11 +666,17 @@ def verificar_timeout():
         with estado_lock:
             if estado_sistema["ultima_actualizacion"]:
                 try:
+                    # Parseamos la hora guardada (que ya está en hora Perú)
                     ultimo = datetime.datetime.strptime(
                         estado_sistema["ultima_actualizacion"], 
                         "%Y-%m-%d %H:%M:%S"
                     )
-                    diferencia = (datetime.datetime.now() - ultimo).seconds
+                    # ✅ CORRECCIÓN: Comparamos contra hora Perú, no hora servidor
+                    ahora_peru = obtener_hora_actual_peru()
+                    
+                    # Calculamos diferencia total en segundos
+                    diferencia = (ahora_peru - ultimo).total_seconds()
+                    
                     if diferencia > 60 and estado_sistema["conectado"]:
                         estado_sistema["conectado"] = False
                         estado_sistema["mensaje"] = "⚠️ ESP32 desconectado (timeout)"
@@ -845,7 +851,7 @@ def recibir_datos():
             estado_sistema['temperatura'] = temp
             estado_sistema['humedad'] = hum
             estado_sistema['hora_actual'] = hora_decimal
-            estado_sistema['ultima_actualizacion'] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            estado_sistema['ultima_actualizacion'] = obtener_hora_actual_peru().strftime("%Y-%m-%d %H:%M:%S")
             estado_sistema['conectado'] = True
             estado_sistema['mensaje'] = "Sistema operando correctamente"
             
@@ -902,7 +908,7 @@ def obtener_kpis():
         if log_eventos:
             try:
                 inicio = datetime.datetime.strptime(log_eventos[0]['timestamp'], "%Y-%m-%d %H:%M:%S")
-                uptime_segundos = (datetime.datetime.now() - inicio).total_seconds()
+                uptime_segundos = (obtener_hora_actual_peru() - inicio).total_seconds()
             except:
                 pass
         
