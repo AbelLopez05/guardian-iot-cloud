@@ -17,7 +17,7 @@ import hashlib
 import secrets
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.neural_network import MLPClassifier
+from sklearn.neural_network import MLPRegressor
 import pickle
 import warnings
 warnings.filterwarnings('ignore')
@@ -212,7 +212,7 @@ class RedNeuronalMLP:
         self.inicializar_modelo()
     
     def inicializar_modelo(self):
-        self.modelo = MLPClassifier(
+        self.modelo = MLPRegressor(
             hidden_layer_sizes=(32, 16, 8),
             activation='relu',
             solver='adam',
@@ -226,7 +226,6 @@ class RedNeuronalMLP:
             verbose=False,
             alpha=0.0001
         )
-        registrar_evento("MLP", "Red neuronal MLP inicializada: [3] → [32-16-8] → [4]")
     
     def generar_dataset_entrenamiento(self):
         X = []
@@ -271,7 +270,7 @@ class RedNeuronalMLP:
         # ========== FASE 1: MUESTRAS POSITIVAS (dentro de rangos) ==========
         print(f"\n🟢 FASE 1: Generando muestras DENTRO de rangos configurados")
         
-        num_muestras_positivas = 200
+        num_muestras_positivas = 500
         
         for _ in range(num_muestras_positivas):
             # Seleccionar un relay al azar para generar la muestra
@@ -316,6 +315,57 @@ class RedNeuronalMLP:
             y.append(output)
         
         print(f"   ✓ {num_muestras_positivas} muestras generadas con evaluación multi-label")
+        
+        # ========== FASE 1.5: MUESTRAS CONCENTRADAS EN HORARIOS EXACTOS ==========
+        print(f"\n🎯 FASE 1.5: Generando muestras CONCENTRADAS en horarios exactos")
+
+        num_muestras_exactas = 300
+
+        for _ in range(num_muestras_exactas):
+            relay_ref = np.random.choice(relays_habilitados)
+            config_ref = relay_ref['config']
+    
+    # ✅ Generar muestras MUY CERCA de los horarios configurados
+            hora_centro = (config_ref['hora_inicio'] + config_ref['hora_fin']) / 2
+            hora = hora_centro + np.random.uniform(-0.2, 0.2)  # ±12 minutos del centro
+    
+    # Temperatura y humedad dentro del rango
+            temp = np.random.uniform(
+                config_ref['temp_min'] + 0.5, 
+                config_ref['temp_max'] - 0.5
+            )
+            hum = np.random.uniform(
+                config_ref['hum_min'] + 2, 
+                config_ref['hum_max'] - 2
+            )
+    
+            temp = np.clip(temp, -40, 80)
+            hum = np.clip(hum, 0, 100)
+            hora = hora % 24
+    
+    # Evaluar todos los relés
+            output = [0, 0, 0, 0]
+            for relay in relays_habilitados:
+                idx = relay['index']
+                cfg = relay['config']
+        
+                temp_ok = cfg['temp_min'] <= temp <= cfg['temp_max']
+                hum_ok = cfg['hum_min'] <= hum <= cfg['hum_max']
+        
+                if cfg['hora_inicio'] <= cfg['hora_fin']:
+                    hora_ok = cfg['hora_inicio'] <= hora <= cfg['hora_fin']
+                else:
+                    hora_ok = hora >= cfg['hora_inicio'] or hora <= cfg['hora_fin']
+        
+                if temp_ok and hum_ok and hora_ok:
+                    output[idx] = 1
+    
+            X.append([temp, hum, hora])
+            y.append(output)
+
+        print(f"   ✓ {num_muestras_exactas} muestras concentradas en horarios exactos")
+
+
         
         # ========== FASE 2: MUESTRAS EN BORDES (transiciones) ==========
         print(f"\n🟡 FASE 2: Generando muestras en BORDES de rangos")
@@ -520,9 +570,27 @@ class RedNeuronalMLP:
             self.modelo.fit(X_scaled, y)
             tiempo_entrenamiento = time.time() - inicio
             
-            # Evaluar accuracy
-            y_pred = self.modelo.predict(X_scaled)
-            accuracy = np.mean([np.array_equal(a, b) for a, b in zip(y_pred, y)]) * 100
+            # Evaluar accuracy con umbral
+            y_pred_raw = self.modelo.predict(X_scaled)
+            y_pred_raw = np.clip(y_pred_raw, 0, 1)  # Asegurar rango [0, 1]
+
+            # Aplicar umbral
+            UMBRAL = 0.4
+            y_pred = (y_pred_raw >= UMBRAL).astype(int)
+
+            # Calcular accuracy por relay individual
+            accuracies_por_relay = []
+            for i in range(4):
+                acc = np.mean(y_pred[:, i] == y[:, i]) * 100
+                accuracies_por_relay.append(acc)
+
+            # Accuracy total (promedio de los 4 relays)
+            accuracy = np.mean(accuracies_por_relay)
+
+            print(f"\n   📊 Accuracy por Relay:")
+            for i, acc in enumerate(accuracies_por_relay):
+                print(f"      Relay {i+1}: {acc:.2f}%")
+            
             
             self.metricas = {
                 'accuracy': round(accuracy, 2),
@@ -574,9 +642,11 @@ class RedNeuronalMLP:
             X_scaled = self.scaler.transform(X)
             
             prediccion_raw = self.modelo.predict(X_scaled)[0]
-            
-            # Umbral de confianza: 0.5
-            UMBRAL = 0.5
+
+        # ✅ Umbral más bajo para ser más permisivo
+            UMBRAL = 0.4  # Cambiado de 0.5 a 0.4 para activar más fácilmente
+        # ✅ Asegurar que los valores están entre 0 y 1
+            prediccion_raw = np.clip(prediccion_raw, 0, 1)
             prediccion = [1 if x >= UMBRAL else 0 for x in prediccion_raw]
             
             resultado = {
