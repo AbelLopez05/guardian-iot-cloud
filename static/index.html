@@ -524,6 +524,193 @@
             margin: 15px 0;
         }
 
+        /* ========== ESTILOS PARA EXPLICACIÓN DE DECISIONES ========== */
+        
+        .explicacion-panel {
+            background: linear-gradient(145deg, #161b22 0%, #0d1117 100%);
+            border: 2px solid #f85149;
+            border-radius: 12px;
+            padding: 25px;
+            margin-top: 30px;
+            box-shadow: 0 0 30px rgba(248, 81, 73, 0.3);
+        }
+
+        .explicacion-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #30363d;
+        }
+
+        .btn-explicar {
+            padding: 12px 24px;
+            background: linear-gradient(145deg, #f85149, #da3633);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 0.95em;
+            transition: all 0.3s;
+            box-shadow: 0 0 15px rgba(248, 81, 73, 0.5);
+        }
+
+        .btn-explicar:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 0 25px rgba(248, 81, 73, 0.8);
+        }
+
+        .relay-explicacion {
+            background: rgba(22, 27, 34, 0.6);
+            border: 2px solid #30363d;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 15px;
+            transition: all 0.3s;
+        }
+
+        .relay-explicacion.activado {
+            border-color: #238636;
+            background: rgba(35, 134, 54, 0.1);
+        }
+
+        .relay-explicacion.desactivado {
+            border-color: #6e7681;
+            background: rgba(110, 118, 129, 0.05);
+        }
+
+        .relay-explicacion.error {
+            border-color: #f85149;
+            background: rgba(248, 81, 73, 0.1);
+        }
+
+        .explicacion-titulo {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .explicacion-nombre {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #58a6ff;
+        }
+
+        .explicacion-estado {
+            padding: 6px 14px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+
+        .explicacion-estado.on {
+            background: #238636;
+            color: white;
+        }
+
+        .explicacion-estado.off {
+            background: #6e7681;
+            color: white;
+        }
+
+        .confianza-bar {
+            width: 100%;
+            height: 30px;
+            background: #21262d;
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 10px 0;
+            border: 2px solid #30363d;
+        }
+
+        .confianza-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #238636, #2ea043);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 0.85em;
+            transition: width 0.5s ease;
+        }
+
+        .confianza-fill.baja {
+            background: linear-gradient(90deg, #da3633, #f85149);
+        }
+
+        .razones-lista {
+            list-style: none;
+            padding: 0;
+            margin: 15px 0 0 0;
+        }
+
+        .razones-lista li {
+            padding: 8px 12px;
+            margin-bottom: 6px;
+            background: rgba(22, 27, 34, 0.4);
+            border-radius: 6px;
+            border-left: 3px solid #30363d;
+            font-size: 0.9em;
+        }
+
+        .razones-lista li.ok {
+            border-left-color: #238636;
+        }
+
+        .razones-lista li.problema {
+            border-left-color: #f85149;
+        }
+
+        .veredicto-box {
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        .veredicto-box.correcto {
+            background: rgba(35, 134, 54, 0.2);
+            border: 2px solid #238636;
+            color: #2ea043;
+        }
+
+        .veredicto-box.error {
+            background: rgba(248, 81, 73, 0.2);
+            border: 2px solid #f85149;
+            color: #ff7b72;
+        }
+
+        .contexto-actual {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: rgba(22, 27, 34, 0.4);
+            border-radius: 8px;
+        }
+
+        .contexto-item {
+            text-align: center;
+        }
+
+        .contexto-label {
+            color: #8b949e;
+            font-size: 0.85em;
+            margin-bottom: 5px;
+        }
+
+        .contexto-value {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #58a6ff;
+        }
+
         .info-box strong {
             color: #58a6ff;
         }
