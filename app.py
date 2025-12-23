@@ -749,7 +749,7 @@ class RedNeuronalMLP:
             prediccion_raw = self.modelo.predict(X_scaled)[0]
             
             # Umbral de decisión
-            UMBRAL = 0.5
+            UMBRAL = 0.4
             
             explicaciones = []
             
