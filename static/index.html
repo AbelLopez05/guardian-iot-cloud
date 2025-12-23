@@ -1845,12 +1845,37 @@
                         actualizarBotonRelay(4, data.relay4);
                     }
 
-                    document.getElementById('temp').textContent = data.temperatura.toFixed(1);
-                    document.getElementById('hum').textContent = data.humedad.toFixed(1);
-                    
+                    // Actualizar valores de temperatura
+                    const temperatura = data.temperatura.toFixed(1);
+                    document.getElementById('tempValue').textContent = `${temperatura} °C`;
+
+                    if (gaugeTemp) {
+                        const tempMax = 50; // Rango máximo del gauge
+                        gaugeTemp.data.datasets[0].data = [parseFloat(temperatura), tempMax - parseFloat(temperatura)];
+                        gaugeTemp.update('none');
+                    }
+
+                    // Actualizar valores de humedad
+                    const humedad = data.humedad.toFixed(1);
+                    document.getElementById('humValue').textContent = `${humedad} %`;
+
+                    if (gaugeHum) {
+                        const humMax = 100;
+                        gaugeHum.data.datasets[0].data = [parseFloat(humedad), humMax - parseFloat(humedad)];
+                        gaugeHum.update('none');
+                    }
+
+                    // Actualizar valores de hora
                     const hora = Math.floor(data.hora_actual || 0);
                     const minutos = Math.round(((data.hora_actual || 0) % 1) * 60);
-                    document.getElementById('hora').textContent = `${String(hora).padStart(2, '0')}:${String(minutos).padStart(2, '0')}`;
+                    const horaTexto = `${String(hora).padStart(2, '0')}:${String(minutos).padStart(2, '0')}`;
+                    document.getElementById('horaValue').textContent = horaTexto;
+
+                    if (gaugeHora) {
+                        const horaDecimal = data.hora_actual || 0;
+                        gaugeHora.data.datasets[0].data = [horaDecimal, 24 - horaDecimal];
+                        gaugeHora.update('none');
+                    }
 
                     document.getElementById('last-update').textContent = data.ultima_actualizacion || 'Esperando...';
 
@@ -1953,8 +1978,95 @@
             });
         }
         
-        // ========== FUNCIONES PARA MLP ANALYTICS ==========
+        // ========== INICIALIZACIÓN DE GAUGES/INDICADORES ==========
 
+        let gaugeTemp, gaugeHum, gaugeHora;
+
+        function inicializarGauges() {
+            // Configuración común para todos los gauges
+            const configComun = {
+                type: 'doughnut',
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    cutout: '75%',
+                    circumference: 270,
+                    rotation: 225,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: { enabled: false }
+                    },
+                    animation: {
+                        animateRotate: true,
+                        animateScale: true,
+                        duration: 1000
+                    }
+                }
+            };
+
+            // 🌡️ GAUGE DE TEMPERATURA (0-50°C)
+            const ctxTemp = document.getElementById('gaugeTemp').getContext('2d');
+            gaugeTemp = new Chart(ctxTemp, {
+                ...configComun,
+                data: {
+                    datasets: [{
+                        data: [0, 50], // [valor actual, valor restante para llegar al máximo]
+                        backgroundColor: [
+                            createGradient(ctxTemp, '#58a6ff', '#8250df'),
+                            'rgba(48, 54, 61, 0.3)'
+                        ],
+                        borderWidth: 0,
+                        borderRadius: 10
+                    }]
+                }
+            });
+
+            // 💧 GAUGE DE HUMEDAD (0-100%)
+            const ctxHum = document.getElementById('gaugeHum').getContext('2d');
+            gaugeHum = new Chart(ctxHum, {
+                ...configComun,
+                data: {
+                    datasets: [{
+                        data: [0, 100],
+                        backgroundColor: [
+                            createGradient(ctxHum, '#2ea043', '#238636'),
+                            'rgba(48, 54, 61, 0.3)'
+                        ],
+                        borderWidth: 0,
+                        borderRadius: 10
+                    }]
+                }
+            });
+
+            // ⏰ GAUGE DE HORA (0-24h)
+            const ctxHora = document.getElementById('gaugeHora').getContext('2d');
+            gaugeHora = new Chart(ctxHora, {
+                ...configComun,
+                data: {
+                    datasets: [{
+                        data: [0, 24],
+                        backgroundColor: [
+                            createGradient(ctxHora, '#d29922', '#f0883e'),
+                            'rgba(48, 54, 61, 0.3)'
+                        ],
+                        borderWidth: 0,
+                        borderRadius: 10
+                    }]
+                }
+            });
+
+            console.log('✅ Gauges inicializados correctamente');
+        }
+
+        // Función auxiliar para crear gradientes
+        function createGradient(ctx, color1, color2) {
+            const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+            gradient.addColorStop(0, color1);
+            gradient.addColorStop(1, color2);
+            return gradient;
+        }
+             
+        // ========== FUNCIONES PARA MLP ANALYTICS ==========
         function inicializarGraficosMLPAnalytics() {
             // Gráfico de Distribución Dataset
             chartDatasetDist = new Chart(document.getElementById('chartDatasetDistribution'), {
@@ -2248,6 +2360,7 @@
             console.log('%cDashboard con Horarios Configurables', 'color: #2ea043; font-size: 14px;');
             
             inicializarGraficos();
+            inicializarGauges();
             // Inicializar visualización de neuronas
             generarNeuronasVisuales('layer1Neurons', 8);
             generarNeuronasVisuales('layer2Neurons', 6);
