@@ -601,6 +601,133 @@ class RedNeuronalMLP:
             registrar_evento("ERROR", f"Error en predicción: {str(e)}")
             return {'relay1': False, 'relay2': False, 'relay3': False, 'relay4': False}
     
+    def explicar_prediccion(self, temperatura, humedad, hora):
+        """🔍 Explica detalladamente por qué cada relay se activa o no"""
+        if not self.entrenado:
+            return {
+                'error': 'MLP no entrenado',
+                'explicaciones': []
+            }
+        
+        try:
+            # Obtener predicción del modelo
+            X = np.array([[temperatura, humedad, hora]])
+            X_scaled = self.scaler.transform(X)
+            prediccion_raw = self.modelo.predict(X_scaled)[0]
+            
+            # Umbral de decisión
+            UMBRAL = 0.5
+            
+            explicaciones = []
+            
+            for i, relay_key in enumerate(['relay1', 'relay2', 'relay3', 'relay4']):
+                config = horarios_config[relay_key]
+                confianza = float(prediccion_raw[i])
+                activado = confianza >= UMBRAL
+                
+                # Evaluar cada condición individualmente
+                temp_ok = config['temp_min'] <= temperatura <= config['temp_max']
+                hum_ok = config['hum_min'] <= humedad <= config['hum_max']
+                
+                # Manejo de horarios que cruzan medianoche
+                if config['hora_inicio'] <= config['hora_fin']:
+                    hora_ok = config['hora_inicio'] <= hora <= config['hora_fin']
+                else:
+                    hora_ok = hora >= config['hora_inicio'] or hora <= config['hora_fin']
+                
+                # Determinar razones específicas
+                razones = []
+                problemas = []
+                
+                if not config['habilitado']:
+                    razones.append("❌ Relay DESHABILITADO en configuración")
+                    problemas.append("disabled")
+                else:
+                    # Evaluar temperatura
+                    if temp_ok:
+                        razones.append(f"✅ Temperatura OK: {temperatura:.1f}°C está en rango [{config['temp_min']:.1f}, {config['temp_max']:.1f}]")
+                    else:
+                        if temperatura < config['temp_min']:
+                            razones.append(f"❄️ Temperatura BAJA: {temperatura:.1f}°C < {config['temp_min']:.1f}°C (mínimo)")
+                            problemas.append("temp_baja")
+                        else:
+                            razones.append(f"🔥 Temperatura ALTA: {temperatura:.1f}°C > {config['temp_max']:.1f}°C (máximo)")
+                            problemas.append("temp_alta")
+                    
+                    # Evaluar humedad
+                    if hum_ok:
+                        razones.append(f"✅ Humedad OK: {humedad:.1f}% está en rango [{config['hum_min']:.1f}, {config['hum_max']:.1f}]")
+                    else:
+                        if humedad < config['hum_min']:
+                            razones.append(f"🏜️ Humedad BAJA: {humedad:.1f}% < {config['hum_min']:.1f}% (mínimo)")
+                            problemas.append("hum_baja")
+                        else:
+                            razones.append(f"💧 Humedad ALTA: {humedad:.1f}% > {config['hum_max']:.1f}% (máximo)")
+                            problemas.append("hum_alta")
+                    
+                    # Evaluar horario
+                    h_ini_str = f"{int(config['hora_inicio']):02d}:{int((config['hora_inicio']%1)*60):02d}"
+                    h_fin_str = f"{int(config['hora_fin']):02d}:{int((config['hora_fin']%1)*60):02d}"
+                    h_actual_str = f"{int(hora):02d}:{int((hora%1)*60):02d}"
+                    
+                    if hora_ok:
+                        razones.append(f"✅ Horario OK: {h_actual_str} está en rango [{h_ini_str}, {h_fin_str}]")
+                    else:
+                        razones.append(f"⏰ FUERA DE HORARIO: {h_actual_str} no está en [{h_ini_str}, {h_fin_str}]")
+                        problemas.append("fuera_horario")
+                
+                # Determinar el veredicto esperado vs real
+                todas_condiciones_ok = temp_ok and hum_ok and hora_ok and config['habilitado']
+                
+                if todas_condiciones_ok and not activado:
+                    veredicto = "⚠️ DEBERÍA ACTIVARSE pero MLP predijo OFF"
+                    tipo = "falso_negativo"
+                elif not todas_condiciones_ok and activado:
+                    veredicto = "⚠️ NO DEBERÍA ACTIVARSE pero MLP predijo ON"
+                    tipo = "falso_positivo"
+                elif activado:
+                    veredicto = "✅ ACTIVADO correctamente"
+                    tipo = "correcto_on"
+                else:
+                    veredicto = "✅ DESACTIVADO correctamente"
+                    tipo = "correcto_off"
+                
+                explicaciones.append({
+                    'relay': relay_key,
+                    'nombre': config['nombre'],
+                    'activado': activado,
+                    'confianza': round(confianza * 100, 2),
+                    'todas_condiciones_ok': todas_condiciones_ok,
+                    'condiciones': {
+                        'temperatura': temp_ok,
+                        'humedad': hum_ok,
+                        'horario': hora_ok,
+                        'habilitado': config['habilitado']
+                    },
+                    'razones': razones,
+                    'problemas': problemas,
+                    'veredicto': veredicto,
+                    'tipo': tipo
+                })
+            
+            return {
+                'temperatura': temperatura,
+                'humedad': humedad,
+                'hora': hora,
+                'hora_legible': f"{int(hora):02d}:{int((hora%1)*60):02d}",
+                'explicaciones': explicaciones,
+                'timestamp': obtener_hora_actual_peru().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+        except Exception as e:
+            print(f"❌ Error explicando predicción: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'error': str(e),
+                'explicaciones': []
+            }
+    
     def obtener_estado(self):
         return {
             'entrenado': self.entrenado,
