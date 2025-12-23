@@ -215,11 +215,7 @@ class RedNeuronalMLP:
         registrar_evento("MLP", "Red neuronal MLP inicializada: [3] → [32-16-8] → [4]")
     
     def generar_dataset_entrenamiento(self):
-    """
-    ✅ DATASET MULTI-LABEL MEJORADO
-    Genera muestras aleatorias y evalúa TODOS los relés simultáneamente
-    para cada muestra, permitiendo múltiples activaciones concurrentes.
-    """
+    
     X = []
     y = []
     
