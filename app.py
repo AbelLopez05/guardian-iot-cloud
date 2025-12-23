@@ -543,7 +543,36 @@ class RedNeuronalMLP:
             porcentaje = (activaciones / total_muestras) * 100
             print(f"      Relay {i+1}: {int(activaciones)} activaciones ({porcentaje:.1f}%)")
         print("="*70 + "\n")
-        
+        # ========== VALIDACIÓN: Verificar que hay muestras ON en cada hora crítica ==========
+        print(f"\n🔍 VALIDACIÓN DE COBERTURA HORARIA:")
+        for relay in relays_habilitados:
+            idx = relay['index']
+            cfg = relay['config']
+            
+            # Contar muestras ON en el rango horario del relay
+            muestras_on_horario = 0
+            for i in range(len(X)):
+                if y[i][idx] == 1:
+                    hora_muestra = X[i][2]
+                    
+                    # Verificar si la muestra cae en el horario configurado
+                    if cfg['hora_inicio'] <= cfg['hora_fin']:
+                        if cfg['hora_inicio'] <= hora_muestra <= cfg['hora_fin']:
+                            muestras_on_horario += 1
+                    else: # Caso cruce de medianoche
+                        if hora_muestra >= cfg['hora_inicio'] or hora_muestra <= cfg['hora_fin']:
+                            muestras_on_horario += 1
+            
+            # Formatear horas para el mensaje
+            h_ini_str = f"{int(cfg['hora_inicio']):02d}:{int((cfg['hora_inicio']%1)*60):02d}"
+            h_fin_str = f"{int(cfg['hora_fin']):02d}:{int((cfg['hora_fin']%1)*60):02d}"
+            
+            if muestras_on_horario < 10: # Umbral bajo porque reducimos el dataset total
+                print(f"   ⚠️  {cfg['nombre']}: Solo {muestras_on_horario} muestras ON en [{h_ini_str}-{h_fin_str}]")
+            else:
+                print(f"   ✅ {cfg['nombre']}: {muestras_on_horario} muestras ON en [{h_ini_str}-{h_fin_str}]")
+
+        print("="*70 + "\n")
         return X, y
 
     def entrenar(self):
@@ -656,13 +685,46 @@ class RedNeuronalMLP:
                 'relay4': bool(prediccion[3])
             }
             
-            if config_umbrales.get('modo_debug', False):
+            # ==============================================================================
+            # 🕵️ ZONA DE DEBUGGING AVANZADO (Comparativa AI vs Reglas)
+            # ==============================================================================
+            if config_umbrales.get('modo_debug', True):  # ✅ Activado por defecto
                 h = int(hora)
                 m = int((hora % 1) * 60)
                 print(f"\n🤖 MLP PREDICCIÓN [{h:02d}:{m:02d}]")
                 print(f"   📊 Entrada: T={temperatura:.1f}°C  H={humedad:.1f}%  Hora={hora:.2f}")
-                print(f"   🧠 Salida: [{prediccion_raw[0]:.3f}, {prediccion_raw[1]:.3f}, {prediccion_raw[2]:.3f}, {prediccion_raw[3]:.3f}]")
+                print(f"   🧠 Salida RAW: [{prediccion_raw[0]:.3f}, {prediccion_raw[1]:.3f}, {prediccion_raw[2]:.3f}, {prediccion_raw[3]:.3f}]")
+                print(f"   📏 Umbral: {UMBRAL}")
                 print(f"   ✅ Decisión: R1={resultado['relay1']}  R2={resultado['relay2']}  R3={resultado['relay3']}  R4={resultado['relay4']}")
+                
+                # ✅ Mostrar qué relay DEBERÍA activarse según configuración
+                print(f"   📋 Debería activarse según config:")
+                for relay_key in ['relay1', 'relay2', 'relay3', 'relay4']:
+                    cfg = horarios_config[relay_key]
+                    if not cfg['habilitado']:
+                        continue
+                    
+                    temp_ok = cfg['temp_min'] <= temperatura <= cfg['temp_max']
+                    hum_ok = cfg['hum_min'] <= humedad <= cfg['hum_max']
+                    
+                    if cfg['hora_inicio'] <= cfg['hora_fin']:
+                        hora_ok = cfg['hora_inicio'] <= hora <= cfg['hora_fin']
+                    else:
+                        hora_ok = hora >= cfg['hora_inicio'] or hora <= cfg['hora_fin']
+                    
+                    if temp_ok and hum_ok and hora_ok:
+                        print(f"      ✅ {relay_key}: SÍ (todas las condiciones OK)")
+                    else:
+                        razones = []
+                        if not temp_ok:
+                            razones.append(f"Temp={temperatura:.1f}°C fuera de [{cfg['temp_min']}, {cfg['temp_max']}]")
+                        if not hum_ok:
+                            razones.append(f"Hum={humedad:.1f}% fuera de [{cfg['hum_min']}, {cfg['hum_max']}]")
+                        if not hora_ok:
+                            h_ini = f"{int(cfg['hora_inicio']):02d}:{int((cfg['hora_inicio']%1)*60):02d}"
+                            h_fin = f"{int(cfg['hora_fin']):02d}:{int((cfg['hora_fin']%1)*60):02d}"
+                            razones.append(f"Hora={h:02d}:{m:02d} fuera de [{h_ini}, {h_fin}]")
+                        print(f"      ❌ {relay_key}: NO ({', '.join(razones)})")
             
             return resultado
             
@@ -1490,9 +1552,10 @@ def inicializar_sistema():
         estado_txt = "✅ ACTIVO" if config['habilitado'] else "⚠️  DESHABILITADO"
         print(f"   {estado_txt} - {config['nombre']}: {int(h_ini):02d}:{int((h_ini%1)*60):02d} - {int(h_fin):02d}:{int((h_fin%1)*60):02d}")
     
-    if not mlp.cargar_modelo():
-        print("\n📦 Modelo MLP no encontrado. Entrenando desde cero...")
+    # ✅ SIEMPRE re-entrenar al iniciar para asegurar datos actualizados
+        print("\n🔄 Re-entrenando modelo con configuración actual...")
         resultado = mlp.entrenar()
+
         if resultado['success']:
             print(f"\n✅ Modelo entrenado exitosamente")
         else:
