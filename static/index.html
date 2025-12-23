@@ -1303,6 +1303,26 @@
                     </tbody>
                 </table>
             </div>
+            <!-- Panel de Explicación de Decisiones -->
+            <div class="explicacion-panel" id="explicacionPanel" style="display: none;">
+                <div class="explicacion-header">
+                    <h3 style="color: #f85149; margin: 0;">🔍 Explicación Detallada de Decisiones</h3>
+                    <button class="btn-explicar" onclick="cerrarExplicacion()">✖ Cerrar</button>
+                </div>
+
+                <div class="contexto-actual" id="contextoActual">
+                    <!-- Se llenará con JavaScript -->
+                </div>
+
+                <div id="explicacionesContainer">
+                    <!-- Se llenará con JavaScript -->
+                </div>
+            </div>
+
+            <!-- Botón para abrir explicación -->
+            <button class="btn-explicar" onclick="explicarUltimaPrediccion()" style="width: 100%; margin-top: 20px;">
+                🔍 Explicar Última Predicción del MLP
+            </button>
         </div>
     </div>
 
