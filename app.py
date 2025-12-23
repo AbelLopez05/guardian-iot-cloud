@@ -315,21 +315,22 @@ class RedNeuronalMLP:
             y.append(output)
         
         print(f"   ✓ {num_muestras_positivas} muestras generadas con evaluación multi-label")
-        
+
         # ========== FASE 1.5: MUESTRAS CONCENTRADAS EN HORARIOS EXACTOS ==========
         print(f"\n🎯 FASE 1.5: Generando muestras CONCENTRADAS en horarios exactos")
 
-        num_muestras_exactas = 300
+        # He bajado esto a 150 para proteger tu RAM (antes 300)
+        num_muestras_exactas = 150 
 
         for _ in range(num_muestras_exactas):
             relay_ref = np.random.choice(relays_habilitados)
             config_ref = relay_ref['config']
-    
-    # ✅ Generar muestras MUY CERCA de los horarios configurados
+            
+            # ✅ Generar muestras MUY CERCA de los horarios configurados
             hora_centro = (config_ref['hora_inicio'] + config_ref['hora_fin']) / 2
-            hora = hora_centro + np.random.uniform(-0.2, 0.2)  # ±12 minutos del centro
-    
-    # Temperatura y humedad dentro del rango
+            hora = hora_centro + np.random.uniform(-0.2, 0.2)
+            
+            # Temperatura y humedad dentro del rango
             temp = np.random.uniform(
                 config_ref['temp_min'] + 0.5, 
                 config_ref['temp_max'] - 0.5
@@ -338,28 +339,28 @@ class RedNeuronalMLP:
                 config_ref['hum_min'] + 2, 
                 config_ref['hum_max'] - 2
             )
-    
+            
             temp = np.clip(temp, -40, 80)
             hum = np.clip(hum, 0, 100)
             hora = hora % 24
-    
-    # Evaluar todos los relés
+            
+            # Evaluar todos los relés
             output = [0, 0, 0, 0]
             for relay in relays_habilitados:
                 idx = relay['index']
                 cfg = relay['config']
-        
+                
                 temp_ok = cfg['temp_min'] <= temp <= cfg['temp_max']
                 hum_ok = cfg['hum_min'] <= hum <= cfg['hum_max']
-        
+                
                 if cfg['hora_inicio'] <= cfg['hora_fin']:
                     hora_ok = cfg['hora_inicio'] <= hora <= cfg['hora_fin']
                 else:
                     hora_ok = hora >= cfg['hora_inicio'] or hora <= cfg['hora_fin']
-        
+                
                 if temp_ok and hum_ok and hora_ok:
                     output[idx] = 1
-    
+            
             X.append([temp, hum, hora])
             y.append(output)
 
@@ -1560,10 +1561,7 @@ def inicializar_sistema():
             print(f"\n✅ Modelo entrenado exitosamente")
         else:
             print(f"\n❌ Error en entrenamiento: {resultado['mensaje']}")
-    else:
-        print(f"\n✅ Modelo MLP cargado correctamente")
-        print(f"   - Accuracy: {mlp.metricas['accuracy']}%")
-        print(f"   - Muestras: {mlp.metricas['samples_trained']}")
+    
     
     print("\n" + "="*70)
     print("📊 INFORMACIÓN DEL SERVIDOR")
