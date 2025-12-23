@@ -271,7 +271,7 @@ class RedNeuronalMLP:
         # ========== FASE 1: MUESTRAS POSITIVAS (dentro de rangos) ==========
         print(f"\n🟢 FASE 1: Generando muestras DENTRO de rangos configurados")
         
-        num_muestras_positivas = 800
+        num_muestras_positivas = 200
         
         for _ in range(num_muestras_positivas):
             # Seleccionar un relay al azar para generar la muestra
@@ -320,7 +320,7 @@ class RedNeuronalMLP:
         # ========== FASE 2: MUESTRAS EN BORDES (transiciones) ==========
         print(f"\n🟡 FASE 2: Generando muestras en BORDES de rangos")
         
-        num_muestras_borde = 400
+        num_muestras_borde = 100
         
         for _ in range(num_muestras_borde):
             relay_ref = np.random.choice(relays_habilitados)
@@ -384,7 +384,7 @@ class RedNeuronalMLP:
         # ========== FASE 3: MUESTRAS NEGATIVAS (fuera de rangos) ==========
         print(f"\n🔴 FASE 3: Generando muestras FUERA de rangos (todo OFF)")
         
-        num_muestras_negativas = 600
+        num_muestras_negativas = 150
         
         for _ in range(num_muestras_negativas):
             # Estrategia: generar valores que NO coincidan con ningún relay
