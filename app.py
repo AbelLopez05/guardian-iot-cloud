@@ -3,10 +3,9 @@ from flask_cors import CORS
 import datetime
 import json
 import os
-import math
+import time
 from collections import deque
 import threading
-import time
 from io import BytesIO
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -46,13 +45,13 @@ config_umbrales = {
     "humedad_alta": 85.0
 }
 
-# === CONFIGURACIÓN DE HORARIOS ===
+# === ✅ CONFIGURACIÓN INICIAL (valores por defecto del proyecto) ===
 horarios_config = {
     "relay1": {
         "nombre": "Motor AC",
         "habilitado": True,
-        "hora_inicio": 17.0,      # 17:00
-        "hora_fin": 17.33,        # 17:20
+        "hora_inicio": 17.0,          # 17:00 (5:00 PM)
+        "hora_fin": 17.0 + (20/60),   # 17:20 (5:20 PM)
         "temp_min": 15.0,
         "temp_max": 18.0,
         "hum_min": 80.0,
@@ -61,8 +60,8 @@ horarios_config = {
     "relay2": {
         "nombre": "Foco 1",
         "habilitado": True,
-        "hora_inicio": 17.5,      # 17:30
-        "hora_fin": 18.0,         # 18:00
+        "hora_inicio": 17.5,          # 17:30 (5:30 PM)
+        "hora_fin": 18.0,             # 18:00 (6:00 PM)
         "temp_min": 18.0,
         "temp_max": 20.0,
         "hum_min": 90.0,
@@ -71,8 +70,8 @@ horarios_config = {
     "relay3": {
         "nombre": "Foco 2",
         "habilitado": True,
-        "hora_inicio": 17.5,      # 17:30
-        "hora_fin": 18.0,         # 18:00
+        "hora_inicio": 17.5,          # 17:30 (5:30 PM)
+        "hora_fin": 18.0,             # 18:00 (6:00 PM)
         "temp_min": 20.0,
         "temp_max": 25.0,
         "hum_min": 80.0,
@@ -82,9 +81,9 @@ horarios_config = {
         "nombre": "Reserva",
         "habilitado": False,
         "hora_inicio": 0.0,
-        "hora_fin": 0.0,
+        "hora_fin": 23.99,
         "temp_min": 0.0,
-        "temp_max": 100.0,
+        "temp_max": 50.0,
         "hum_min": 0.0,
         "hum_max": 100.0
     }
@@ -181,7 +180,7 @@ def registrar_evento(tipo, mensaje):
     log_eventos.append(evento)
     print(f"[{tipo}] {mensaje}")
 
-# ========== RED NEURONAL MLP ==========
+# ========== RED NEURONAL MLP MEJORADA ==========
 
 class RedNeuronalMLP:
     def __init__(self):
@@ -191,7 +190,7 @@ class RedNeuronalMLP:
         self.metricas = {
             'accuracy': 0.0,
             'samples_trained': 0,
-            'architecture': 'Entrada[3] → [16-8] → Salida[4]',
+            'architecture': 'Entrada[3] → [32-16-8] → Salida[4]',
             'loss': 0.0,
             'iterations': 0,
             'training_time': 0.0
@@ -200,96 +199,149 @@ class RedNeuronalMLP:
     
     def inicializar_modelo(self):
         self.modelo = MLPClassifier(
-            hidden_layer_sizes=(16, 8),
+            hidden_layer_sizes=(32, 16, 8),
             activation='relu',
             solver='adam',
-            max_iter=2000,
+            max_iter=3000,
             random_state=42,
             learning_rate='adaptive',
             learning_rate_init=0.001,
             early_stopping=True,
             validation_fraction=0.2,
-            n_iter_no_change=50,
-            verbose=False
+            n_iter_no_change=100,
+            verbose=False,
+            alpha=0.0001
         )
-        registrar_evento("MLP", "Red neuronal MLP inicializada: [3] → [16-8] → [4]")
+        registrar_evento("MLP", "Red neuronal MLP inicializada: [3] → [32-16-8] → [4]")
     
     def generar_dataset_entrenamiento(self):
-        """Genera dataset usando la configuración actual de horarios"""
+        """✅ Dataset generado dinámicamente según horarios configurados"""
         X = []
         y = []
+        
+        print("\n📊 GENERANDO DATASET DE ENTRENAMIENTO")
+        print("="*70)
+        
+        relays_activos = 0
         
         # Generar datos para cada relay configurado
         for relay_key in ['relay1', 'relay2', 'relay3', 'relay4']:
             config = horarios_config[relay_key]
             
             if not config['habilitado']:
+                print(f"⚠️  {config['nombre']} (deshabilitado)")
                 continue
             
-            # Generar 100 muestras positivas para este relay
-            for _ in range(100):
+            relays_activos += 1
+            relay_index = int(relay_key[-1]) - 1
+            
+            # Mostrar configuración
+            h_ini = config['hora_inicio']
+            h_fin = config['hora_fin']
+            h_ini_str = f"{int(h_ini):02d}:{int((h_ini%1)*60):02d}"
+            h_fin_str = f"{int(h_fin):02d}:{int((h_fin%1)*60):02d}"
+            
+            print(f"\n✅ {config['nombre']} (Relay {relay_index + 1})")
+            print(f"   📅 Horario: {h_ini_str} - {h_fin_str}")
+            print(f"   🌡️  Temperatura: {config['temp_min']:.1f}°C - {config['temp_max']:.1f}°C")
+            print(f"   💧 Humedad: {config['hum_min']:.1f}% - {config['hum_max']:.1f}%")
+            
+            # Generar 200 muestras positivas
+            for _ in range(200):
                 temp = np.random.uniform(config['temp_min'], config['temp_max'])
                 hum = np.random.uniform(config['hum_min'], config['hum_max'])
                 hora = np.random.uniform(config['hora_inicio'], config['hora_fin'])
                 
                 X.append([temp, hum, hora])
                 
-                # Output: activar solo este relay
                 output = [0, 0, 0, 0]
-                relay_index = int(relay_key[-1]) - 1  # relay1 -> 0, relay2 -> 1, etc.
                 output[relay_index] = 1
                 y.append(output)
-        
-        # Casos OFF - Fuera de las condiciones (200 muestras)
-        for _ in range(200):
-            # Generar datos que NO cumplan ninguna condición
-            temp = np.random.choice([
-                np.random.uniform(10, 14),
-                np.random.uniform(26, 35)
-            ])
-            hum = np.random.choice([
-                np.random.uniform(20, 75),
-                np.random.uniform(101, 105)
-            ]) if temp > 25 else np.random.uniform(40, 75)
             
-            hora = np.random.choice([
-                np.random.uniform(0, 16),
-                np.random.uniform(19, 24)
+            print(f"   ✓ Generadas 200 muestras positivas")
+        
+        if relays_activos == 0:
+            print("\n⚠️  ADVERTENCIA: No hay relays habilitados!")
+            print("   Generando dataset mínimo...")
+            # Dataset mínimo de seguridad
+            for _ in range(100):
+                X.append([np.random.uniform(15, 25), np.random.uniform(60, 90), np.random.uniform(0, 24)])
+                y.append([0, 0, 0, 0])
+        
+        # Generar casos OFF (proporción balanceada)
+        num_muestras_off = max(400, relays_activos * 200)
+        print(f"\n🔴 CASOS OFF (todo apagado)")
+        print(f"   Generando {num_muestras_off} muestras negativas...")
+        
+        for _ in range(num_muestras_off):
+            # Temperatura fuera de todos los rangos
+            temp = np.random.choice([
+                np.random.uniform(5, 14),
+                np.random.uniform(26, 40)
             ])
+            
+            hum = np.random.uniform(10, 100)
+            
+            # Hora fuera de todos los rangos configurados
+            todas_horas = []
+            for relay_key in ['relay1', 'relay2', 'relay3', 'relay4']:
+                if horarios_config[relay_key]['habilitado']:
+                    todas_horas.append(horarios_config[relay_key]['hora_inicio'])
+                    todas_horas.append(horarios_config[relay_key]['hora_fin'])
+            
+            if todas_horas:
+                hora_min = min(todas_horas)
+                hora_max = max(todas_horas)
+                
+                if hora_min > 1:
+                    hora = np.random.uniform(0, hora_min - 0.5)
+                elif hora_max < 23:
+                    hora = np.random.uniform(hora_max + 0.5, 24)
+                else:
+                    hora = np.random.uniform(0, 24)
+            else:
+                hora = np.random.uniform(0, 24)
             
             X.append([temp, hum, hora])
             y.append([0, 0, 0, 0])
+        
+        print(f"   ✓ {num_muestras_off} muestras OFF generadas")
+        
+        print("\n" + "="*70)
+        print(f"📈 RESUMEN DEL DATASET:")
+        print(f"   Total muestras: {len(X)}")
+        print(f"   Muestras ON: {int(np.sum(y))}")
+        print(f"   Muestras OFF: {len(X) - int(np.sum(y))}")
+        print(f"   Relays activos: {relays_activos}")
+        print("="*70 + "\n")
         
         return np.array(X), np.array(y)
 
     def entrenar(self):
         try:
-            print("\n" + "="*60)
-            print("🧠 ENTRENAMIENTO DE RED NEURONAL MLP")
-            print("="*60)
-            print("📊 Generando dataset con horarios configurados...")
+            print("\n" + "🧠"*35)
+            print("   ENTRENAMIENTO DE RED NEURONAL MLP")
+            print("🧠"*35 + "\n")
             
             X, y = self.generar_dataset_entrenamiento()
             
-            print(f"✓ Dataset generado: {len(X)} muestras")
+            if len(X) == 0:
+                raise Exception("Dataset vacío. Configura al menos un relay.")
             
-            # Mostrar configuración actual
-            for relay_key in ['relay1', 'relay2', 'relay3', 'relay4']:
-                config = horarios_config[relay_key]
-                if config['habilitado']:
-                    h_inicio = config['hora_inicio']
-                    h_fin = config['hora_fin']
-                    print(f"  - {config['nombre']}: {h_inicio:.2f}-{h_fin:.2f}h, "
-                          f"T:{config['temp_min']:.0f}-{config['temp_max']:.0f}°C, "
-                          f"H:{config['hum_min']:.0f}-{config['hum_max']:.0f}%")
-            
+            # Escalar datos
             X_scaled = self.scaler.fit_transform(X)
             
-            print("\n⚙️ Entrenando red neuronal...")
+            print("⚙️  INICIANDO ENTRENAMIENTO...")
+            print(f"   Arquitectura: {self.metricas['architecture']}")
+            print(f"   Optimizador: Adam (learning_rate=0.001)")
+            print(f"   Max iteraciones: 3000")
+            print(f"   Early stopping: Activado\n")
+            
             inicio = time.time()
             self.modelo.fit(X_scaled, y)
             tiempo_entrenamiento = time.time() - inicio
             
+            # Evaluar accuracy
             y_pred = self.modelo.predict(X_scaled)
             accuracy = np.mean([np.array_equal(a, b) for a, b in zip(y_pred, y)]) * 100
             
@@ -298,19 +350,22 @@ class RedNeuronalMLP:
                 'samples_trained': len(X),
                 'training_time': round(tiempo_entrenamiento, 3),
                 'iterations': self.modelo.n_iter_,
-                'architecture': 'Entrada[3] → [16-8] → Salida[4]',
+                'architecture': 'Entrada[3] → [32-16-8] → Salida[4]',
                 'loss': round(self.modelo.loss_, 6) if hasattr(self.modelo, 'loss_') else 0.0
             }
             
             self.entrenado = True
             
-            print(f"\n✅ ENTRENAMIENTO COMPLETADO")
-            print(f"  - Accuracy: {accuracy:.2f}%")
-            print(f"  - Tiempo: {tiempo_entrenamiento:.3f}s")
-            print(f"  - Iteraciones: {self.modelo.n_iter_}")
-            print("="*60 + "\n")
+            print("="*70)
+            print("✅ ENTRENAMIENTO COMPLETADO")
+            print("="*70)
+            print(f"   Accuracy: {accuracy:.2f}%")
+            print(f"   Tiempo: {tiempo_entrenamiento:.3f} segundos")
+            print(f"   Iteraciones: {self.modelo.n_iter_}")
+            print(f"   Loss final: {self.metricas['loss']:.6f}")
+            print("="*70 + "\n")
             
-            registrar_evento("MLP", f"Entrenamiento exitoso: Accuracy={accuracy:.2f}%")
+            registrar_evento("MLP", f"✅ Entrenamiento exitoso: Accuracy={accuracy:.2f}%, Muestras={len(X)}")
             self.guardar_modelo()
             
             return {
@@ -320,7 +375,7 @@ class RedNeuronalMLP:
             }
             
         except Exception as e:
-            print(f"❌ ERROR EN ENTRENAMIENTO: {e}")
+            print(f"\n❌ ERROR EN ENTRENAMIENTO: {e}")
             import traceback
             traceback.print_exc()
             registrar_evento("ERROR", f"Error entrenando MLP: {str(e)}")
@@ -330,6 +385,7 @@ class RedNeuronalMLP:
             }
     
     def predecir(self, temperatura, humedad, hora):
+        """✅ Predicción mejorada con logging detallado"""
         if not self.entrenado:
             registrar_evento("WARNING", "MLP no entrenado, retornando estado seguro")
             return {'relay1': False, 'relay2': False, 'relay3': False, 'relay4': False}
@@ -339,7 +395,10 @@ class RedNeuronalMLP:
             X_scaled = self.scaler.transform(X)
             
             prediccion_raw = self.modelo.predict(X_scaled)[0]
-            prediccion = [int(round(x)) for x in prediccion_raw]
+            
+            # Umbral de confianza: 0.5
+            UMBRAL = 0.5
+            prediccion = [1 if x >= UMBRAL else 0 for x in prediccion_raw]
             
             resultado = {
                 'relay1': bool(prediccion[0]),
@@ -349,9 +408,12 @@ class RedNeuronalMLP:
             }
             
             if config_umbrales.get('modo_debug', False):
-                print(f"🤖 MLP Inferencia:")
-                print(f"   Entrada: T={temperatura:.1f}°C H={humedad:.1f}% Hora={hora:.2f}")
-                print(f"   Salida: {prediccion} → {resultado}")
+                h = int(hora)
+                m = int((hora % 1) * 60)
+                print(f"\n🤖 MLP PREDICCIÓN [{h:02d}:{m:02d}]")
+                print(f"   📊 Entrada: T={temperatura:.1f}°C  H={humedad:.1f}%  Hora={hora:.2f}")
+                print(f"   🧠 Salida: [{prediccion_raw[0]:.3f}, {prediccion_raw[1]:.3f}, {prediccion_raw[2]:.3f}, {prediccion_raw[3]:.3f}]")
+                print(f"   ✅ Decisión: R1={resultado['relay1']}  R2={resultado['relay2']}  R3={resultado['relay3']}  R4={resultado['relay4']}")
             
             return resultado
             
@@ -365,19 +427,20 @@ class RedNeuronalMLP:
             'entrenado': self.entrenado,
             'metricas': self.metricas,
             'arquitectura': {
-                'entradas': ['Temperatura (°C)', 'Humedad (%)', 'Hora (24h)'],
-                'capas_ocultas': [16, 8],
+                'entradas': ['Temperatura (°C)', 'Humedad (%)', 'Hora (24h decimal)'],
+                'capas_ocultas': [32, 16, 8],
                 'salidas': ['Relay 1 (Motor)', 'Relay 2 (Foco 1)', 'Relay 3 (Foco 2)', 'Relay 4 (Reserva)'],
                 'activacion': 'ReLU',
                 'optimizador': 'Adam',
                 'total_parametros': self.calcular_parametros()
-            }
+            },
+            'horarios_actuales': horarios_config
         }
     
     def calcular_parametros(self):
         if not self.entrenado:
             return 0
-        capas = [3] + [16, 8] + [4]
+        capas = [3] + [32, 16, 8] + [4]
         total = 0
         for i in range(len(capas) - 1):
             total += (capas[i] * capas[i+1]) + capas[i+1]
@@ -391,7 +454,8 @@ class RedNeuronalMLP:
                         'modelo': self.modelo,
                         'scaler': self.scaler,
                         'metricas': self.metricas,
-                        'version': '4.0'
+                        'horarios': horarios_config,
+                        'version': '5.0'
                     }, f)
                 registrar_evento("MLP", f"Modelo guardado en {ruta}")
             except Exception as e:
@@ -469,7 +533,7 @@ def obtener_horarios():
 
 @app.route('/api/horarios', methods=['POST'])
 def actualizar_horarios():
-    """Actualizar configuración de horarios (requiere autenticación)"""
+    """✅ Actualizar configuración de horarios (NO requiere re-entrenar inmediatamente)"""
     if not verificar_admin_autenticado():
         return jsonify({"error": "Autenticación requerida", "requiere_auth": True}), 403
     
@@ -495,15 +559,19 @@ def actualizar_horarios():
             horarios_config[relay_key]['hum_min'] = float(data['hum_min'])
         if 'hum_max' in data:
             horarios_config[relay_key]['hum_max'] = float(data['hum_max'])
+        if 'nombre' in data:
+            horarios_config[relay_key]['nombre'] = data['nombre']
         
         # Guardar cambios
         guardar_horarios()
         
-        registrar_evento("CONFIG", f"Horarios actualizados para {relay_key}")
+        h_ini = horarios_config[relay_key]['hora_inicio']
+        h_fin = horarios_config[relay_key]['hora_fin']
+        registrar_evento("CONFIG", f"✅ {relay_key} actualizado: {int(h_ini):02d}:{int((h_ini%1)*60):02d} - {int(h_fin):02d}:{int((h_fin%1)*60):02d}")
         
         return jsonify({
             "ok": True,
-            "mensaje": "Horarios actualizados correctamente",
+            "mensaje": "Configuración guardada. Recuerda re-entrenar el MLP.",
             "horarios": horarios_config
         })
         
@@ -524,10 +592,10 @@ def login_admin():
             session_id = secrets.token_hex(32)
             session['admin_session_id'] = session_id
             sesiones_admin[session_id] = time.time()
-            registrar_evento("AUTH", f"Login exitoso - Usuario: {usuario}")
+            registrar_evento("AUTH", f"✅ Login exitoso - Usuario: {usuario}")
             return jsonify({"ok": True, "mensaje": "Autenticación exitosa"})
         else:
-            registrar_evento("AUTH", f"Intento fallido de login - Usuario: {usuario}")
+            registrar_evento("AUTH", f"❌ Login fallido - Usuario: {usuario}")
             return jsonify({"ok": False, "mensaje": "Credenciales incorrectas"}), 401
     except Exception as e:
         return jsonify({"ok": False, "mensaje": str(e)}), 500
@@ -615,8 +683,9 @@ def recibir_datos():
                 "modo": modo_actual
             })
         
-        print(f"✓ [{modo_actual}] T:{temp:.1f}°C H:{hum:.1f}% H:{hora_decimal:.2f} → " +
-              f"R1:{decision['relay1']} R2:{decision['relay2']} R3:{decision['relay3']} R4:{decision['relay4']}")
+        h = int(hora_decimal)
+        m = int((hora_decimal % 1) * 60)
+        print(f"✓ [{modo_actual}][{h:02d}:{m:02d}] T:{temp:.1f}°C H:{hum:.1f}% → R1:{decision['relay1']} R2:{decision['relay2']} R3:{decision['relay3']} R4:{decision['relay4']}")
         
         return jsonify(decision), 200
         
@@ -626,7 +695,7 @@ def recibir_datos():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-# ========== DEMÁS ENDPOINTS (sin cambios significativos) ==========
+# ========== DEMÁS ENDPOINTS ==========
 
 @app.route('/api/estado', methods=['GET'])
 def obtener_estado():
@@ -756,6 +825,10 @@ def entrenar_mlp():
     if not verificar_admin_autenticado():
         return jsonify({"error": "Autenticación requerida", "requiere_auth": True}), 403
     
+    print("\n" + "🔄"*35)
+    print("   RE-ENTRENAMIENTO SOLICITADO DESDE DASHBOARD")
+    print("🔄"*35)
+    
     resultado = mlp.entrenar()
     return jsonify(resultado)
 
@@ -814,8 +887,8 @@ def generar_reporte_pdf():
             elementos.append(tabla_resumen)
         
         elementos.append(Spacer(1, 0.3*inch))
-        
         elementos.append(Paragraph("<b>Red Neuronal MLP</b>", estilos['Heading3']))
+        
         if mlp.entrenado:
             mlp_info = [
                 ['Parámetro', 'Valor'],
@@ -864,15 +937,21 @@ def inicializar_sistema():
     cargar_configuracion()
     cargar_horarios()
     
+    print("\n📋 CONFIGURACIÓN DE HORARIOS ACTUAL:")
+    for relay_key in ['relay1', 'relay2', 'relay3', 'relay4']:
+        config = horarios_config[relay_key]
+        h_ini = config['hora_inicio']
+        h_fin = config['hora_fin']
+        estado_txt = "✅ ACTIVO" if config['habilitado'] else "⚠️  DESHABILITADO"
+        print(f"   {estado_txt} - {config['nombre']}: {int(h_ini):02d}:{int((h_ini%1)*60):02d} - {int(h_fin):02d}:{int((h_fin%1)*60):02d}")
+    
     if not mlp.cargar_modelo():
         print("\n📦 Modelo MLP no encontrado. Entrenando desde cero...")
         resultado = mlp.entrenar()
         if resultado['success']:
-            print(f"✅ Modelo entrenado exitosamente")
-            print(f"   - Accuracy: {resultado['metricas']['accuracy']}%")
-            print(f"   - Tiempo: {resultado['metricas']['training_time']}s")
+            print(f"\n✅ Modelo entrenado exitosamente")
         else:
-            print(f"❌ Error en entrenamiento: {resultado['mensaje']}")
+            print(f"\n❌ Error en entrenamiento: {resultado['mensaje']}")
     else:
         print(f"\n✅ Modelo MLP cargado correctamente")
         print(f"   - Accuracy: {mlp.metricas['accuracy']}%")
@@ -884,9 +963,9 @@ def inicializar_sistema():
     print(f"📡 Dashboard Web: http://localhost:5000")
     print(f"🔌 API Endpoint: http://localhost:5000/api/telemetria")
     print(f"🤖 Estado MLP: {'ENTRENADO ✅' if mlp.entrenado else 'NO ENTRENADO ⚠️'}")
-    print(f"⚙️ Modos: AUTO (MLP) + MANUAL")
-    print(f"⏰ Horarios Configurables desde Dashboard")
-    print(f"🔑 Credenciales Admin: usuario='admin' / password='admin123'")
+    print(f"⚙️  Modos: AUTO (MLP) + MANUAL")
+    print(f"⏰ Horarios: CONFIGURABLES desde Dashboard")
+    print(f"🔑 Admin: usuario='admin' / password='admin123'")
     print("="*70)
     print("\n🚀 Sistema listo. Esperando conexiones...\n")
     
