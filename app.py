@@ -887,6 +887,46 @@ def obtener_estado():
 def obtener_historial():
     return jsonify({"datos": list(historial)})
 
+@app.route('/api/historial-predicciones', methods=['GET'])
+def obtener_historial_predicciones():
+    """📈 Historial de las últimas predicciones del MLP"""
+    try:
+        # Obtener últimos 50 registros con información de predicción
+        datos_recientes = list(historial)[-50:] if len(historial) > 0 else []
+        
+        predicciones_formateadas = []
+        for dato in datos_recientes:
+            hora_decimal = dato.get('hora', 0)
+            h = int(hora_decimal)
+            m = int((hora_decimal % 1) * 60)
+            
+            predicciones_formateadas.append({
+                "timestamp": dato["timestamp"],
+                "hora_legible": f"{h:02d}:{m:02d}",
+                "temperatura": round(dato["temperatura"], 1),
+                "humedad": round(dato["humedad"], 1),
+                "relay1": dato.get("relay1", False),
+                "relay2": dato.get("relay2", False),
+                "relay3": dato.get("relay3", False),
+                "relay4": dato.get("relay4", False),
+                "total_activos": sum([
+                    dato.get("relay1", False),
+                    dato.get("relay2", False),
+                    dato.get("relay3", False),
+                    dato.get("relay4", False)
+                ]),
+                "modo": dato.get("modo", "AUTO")
+            })
+        
+        return jsonify({
+            "predicciones": predicciones_formateadas,
+            "total_registros": len(predicciones_formateadas)
+        })
+        
+    except Exception as e:
+        print(f"Error obteniendo historial predicciones: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/log', methods=['GET'])
 def obtener_log():
     return jsonify({"eventos": list(log_eventos)})
@@ -929,6 +969,88 @@ def obtener_kpis():
             "total_registros": len(historial),
             "modo_actual": estado_sistema['modo']
         })
+
+@app.route('/api/mlp/metricas-detalladas', methods=['GET'])
+def obtener_metricas_detalladas_mlp():
+    """📊 Métricas detalladas del MLP para visualización"""
+    try:
+        if not mlp.entrenado:
+            return jsonify({
+                "error": "MLP no entrenado",
+                "entrenado": False
+            })
+        
+        # Estadísticas de los datos de entrenamiento
+        X, y = mlp.generar_dataset_entrenamiento()
+        
+        # Contar activaciones por relay
+        activaciones_relay = []
+        for i in range(4):
+            count = int(np.sum(y[:, i]))
+            porcentaje = (count / len(y)) * 100
+            activaciones_relay.append({
+                "relay": i + 1,
+                "nombre": horarios_config[f'relay{i+1}']['nombre'],
+                "activaciones": count,
+                "porcentaje": round(porcentaje, 2),
+                "habilitado": horarios_config[f'relay{i+1}']['habilitado']
+            })
+        
+        # Distribución de muestras ON/OFF
+        total_muestras = len(y)
+        muestras_off = int(np.sum(np.all(y == 0, axis=1)))
+        muestras_on = total_muestras - muestras_off
+        
+        # Activaciones simultáneas
+        activaciones_simultaneas = np.sum(y, axis=1)
+        distribucion_simultaneas = {}
+        for i in range(5):  # 0 a 4 activaciones simultáneas
+            count = int(np.sum(activaciones_simultaneas == i))
+            distribucion_simultaneas[f"{i}_activos"] = {
+                "count": count,
+                "porcentaje": round((count / total_muestras) * 100, 2)
+            }
+        
+        # Información de pesos (si está disponible)
+        total_parametros = mlp.calcular_parametros()
+        
+        return jsonify({
+            "entrenado": True,
+            "metricas_generales": mlp.metricas,
+            "arquitectura": {
+                "entradas": 3,
+                "capas_ocultas": [32, 16, 8],
+                "salidas": 4,
+                "total_parametros": total_parametros,
+                "funcion_activacion": "ReLU",
+                "optimizador": "Adam"
+            },
+            "dataset": {
+                "total_muestras": total_muestras,
+                "muestras_on": muestras_on,
+                "muestras_off": muestras_off,
+                "porcentaje_on": round((muestras_on / total_muestras) * 100, 2),
+                "porcentaje_off": round((muestras_off / total_muestras) * 100, 2)
+            },
+            "activaciones_por_relay": activaciones_relay,
+            "distribucion_simultaneas": distribucion_simultaneas,
+            "horarios_configurados": {
+                key: {
+                    "nombre": config["nombre"],
+                    "habilitado": config["habilitado"],
+                    "hora_inicio": f"{int(config['hora_inicio']):02d}:{int((config['hora_inicio']%1)*60):02d}",
+                    "hora_fin": f"{int(config['hora_fin']):02d}:{int((config['hora_fin']%1)*60):02d}",
+                    "rango_temp": f"{config['temp_min']:.1f}°C - {config['temp_max']:.1f}°C",
+                    "rango_hum": f"{config['hum_min']:.1f}% - {config['hum_max']:.1f}%"
+                } for key, config in horarios_config.items()
+            }
+        })
+        
+    except Exception as e:
+        print(f"Error obteniendo métricas detalladas: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/grafico-datos', methods=['GET'])
 def obtener_datos_grafico():
