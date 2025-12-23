@@ -2092,6 +2092,104 @@
             }
         }
 
+        // ========== FUNCIONES PARA EXPLICACIÓN DE DECISIONES ==========
+
+        async function explicarUltimaPrediccion() {
+            try {
+                const response = await fetch('/api/mlp/explicar-ultima');
+                const data = await response.json();
+
+                if (data.error) {
+                    alert(`⚠️ ${data.error}`);
+                    return;
+                }
+
+                mostrarExplicacion(data);
+
+            } catch (error) {
+                console.error('Error obteniendo explicación:', error);
+                alert('Error al obtener la explicación');
+            }
+        }
+
+        function mostrarExplicacion(data) {
+            const panel = document.getElementById('explicacionPanel');
+            const contextoDiv = document.getElementById('contextoActual');
+            const container = document.getElementById('explicacionesContainer');
+
+            // Mostrar contexto actual
+            contextoDiv.innerHTML = `
+                <div class="contexto-item">
+                    <div class="contexto-label">🌡️ Temperatura</div>
+                    <div class="contexto-value">${data.temperatura.toFixed(1)}°C</div>
+                </div>
+                <div class="contexto-item">
+                    <div class="contexto-label">💧 Humedad</div>
+                    <div class="contexto-value">${data.humedad.toFixed(1)}%</div>
+                </div>
+                <div class="contexto-item">
+                    <div class="contexto-label">⏰ Hora</div>
+                    <div class="contexto-value">${data.hora_legible}</div>
+                </div>
+                <div class="contexto-item">
+                    <div class="contexto-label">📅 Timestamp</div>
+                    <div class="contexto-value" style="font-size: 0.9em;">${data.timestamp}</div>
+                </div>
+            `;
+
+            // Generar explicaciones por relay
+            container.innerHTML = data.explicaciones.map(exp => {
+                const claseEstado = exp.activado ? 'activado' : 'desactivado';
+                const claseError = exp.tipo.includes('falso') ? 'error' : '';
+                
+                const confianzaClase = exp.confianza >= 50 ? '' : 'baja';
+
+                return `
+                    <div class="relay-explicacion ${claseEstado} ${claseError}">
+                        <div class="explicacion-titulo">
+                            <div class="explicacion-nombre">
+                                ${getIconoRelay(exp.relay)} ${exp.nombre}
+                            </div>
+                            <div class="explicacion-estado ${exp.activado ? 'on' : 'off'}">
+                                ${exp.activado ? 'ON' : 'OFF'}
+                            </div>
+                        </div>
+
+                        <div>
+                            <small style="color: #8b949e;">Confianza del Modelo:</small>
+                            <div class="confianza-bar">
+                                <div class="confianza-fill ${confianzaClase}" style="width: ${exp.confianza}%">
+                                    ${exp.confianza.toFixed(1)}%
+                                </div>
+                            </div>
+                        </div>
+
+                        <ul class="razones-lista">
+                            ${exp.razones.map(razon => {
+                                const esProblema = razon.includes('❌') || razon.includes('❄️') || 
+                                                  razon.includes('🔥') || razon.includes('🏜️') || 
+                                                  razon.includes('💧') || razon.includes('⏰');
+                                return `<li class="${esProblema ? 'problema' : 'ok'}">${razon}</li>`;
+                            }).join('')}
+                        </ul>
+
+                        <div class="veredicto-box ${exp.tipo.includes('correcto') ? 'correcto' : 'error'}">
+                            ${exp.veredicto}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Mostrar panel con animación
+            panel.style.display = 'block';
+            panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function cerrarExplicacion() {
+            const panel = document.getElementById('explicacionPanel');
+            panel.style.display = 'none';
+        }
+
         function actualizarGraficos() {
             fetch('/api/grafico-datos')
                 .then(r => r.json())
