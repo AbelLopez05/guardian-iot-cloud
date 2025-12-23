@@ -1179,6 +1179,51 @@ def obtener_metricas_detalladas_mlp():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/mlp/explicar', methods=['POST'])
+def explicar_prediccion_actual():
+    """🔍 Explica la predicción actual del MLP"""
+    try:
+        data = request.json
+        temperatura = float(data.get('temperatura', 20))
+        humedad = float(data.get('humedad', 60))
+        hora = float(data.get('hora', obtener_hora_decimal()))
+        
+        explicacion = mlp.explicar_prediccion(temperatura, humedad, hora)
+        return jsonify(explicacion)
+        
+    except Exception as e:
+        print(f"Error en explicación: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/mlp/explicar-ultima', methods=['GET'])
+def explicar_ultima_prediccion():
+    """🔍 Explica la última predicción registrada"""
+    try:
+        with estado_lock:
+            if len(historial) == 0:
+                return jsonify({"error": "No hay datos en el historial"})
+            
+            ultimo = list(historial)[-1]
+            temperatura = ultimo['temperatura']
+            humedad = ultimo['humedad']
+            hora = ultimo['hora']
+        
+        explicacion = mlp.explicar_prediccion(temperatura, humedad, hora)
+        
+        # Agregar el estado real de los relés
+        explicacion['estado_real'] = {
+            'relay1': ultimo.get('relay1', False),
+            'relay2': ultimo.get('relay2', False),
+            'relay3': ultimo.get('relay3', False),
+            'relay4': ultimo.get('relay4', False)
+        }
+        
+        return jsonify(explicacion)
+        
+    except Exception as e:
+        print(f"Error explicando última predicción: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/grafico-datos', methods=['GET'])
 def obtener_datos_grafico():
     with estado_lock:
