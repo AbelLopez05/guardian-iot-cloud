@@ -215,85 +215,214 @@ class RedNeuronalMLP:
         registrar_evento("MLP", "Red neuronal MLP inicializada: [3] → [32-16-8] → [4]")
     
     def generar_dataset_entrenamiento(self):
-        """✅ Dataset generado dinámicamente según horarios configurados"""
-        X = []
-        y = []
-        
-        print("\n📊 GENERANDO DATASET DE ENTRENAMIENTO")
-        print("="*70)
-        
-        relays_activos = 0
-        
-        # Generar datos para cada relay configurado
-        for relay_key in ['relay1', 'relay2', 'relay3', 'relay4']:
+    """
+    ✅ DATASET MULTI-LABEL MEJORADO
+    Genera muestras aleatorias y evalúa TODOS los relés simultáneamente
+    para cada muestra, permitiendo múltiples activaciones concurrentes.
+    """
+    X = []
+    y = []
+    
+    print("\n" + "="*70)
+    print("📊 GENERANDO DATASET MULTI-LABEL (Sin Conflictos)")
+    print("="*70)
+    
+    # Extraer rangos de todos los relés habilitados
+    relays_habilitados = []
+    for relay_key in ['relay1', 'relay2', 'relay3', 'relay4']:
+        if horarios_config[relay_key]['habilitado']:
             config = horarios_config[relay_key]
-            
-            if not config['habilitado']:
-                print(f"⚠️  {config['nombre']} (deshabilitado)")
-                continue
-            
-            relays_activos += 1
             relay_index = int(relay_key[-1]) - 1
             
-            # Mostrar configuración
-            h_ini = config['hora_inicio']
-            h_fin = config['hora_fin']
-            h_ini_str = f"{int(h_ini):02d}:{int((h_ini%1)*60):02d}"
-            h_fin_str = f"{int(h_fin):02d}:{int((h_fin%1)*60):02d}"
+            h_ini_str = f"{int(config['hora_inicio']):02d}:{int((config['hora_inicio']%1)*60):02d}"
+            h_fin_str = f"{int(config['hora_fin']):02d}:{int((config['hora_fin']%1)*60):02d}"
             
             print(f"\n✅ {config['nombre']} (Relay {relay_index + 1})")
-            print(f"   📅 Horario: {h_ini_str} - {h_fin_str}")
-            print(f"   🌡️  Temperatura: {config['temp_min']:.1f}°C - {config['temp_max']:.1f}°C")
-            print(f"   💧 Humedad: {config['hum_min']:.1f}% - {config['hum_max']:.1f}%")
+            print(f"   📅 {h_ini_str} - {h_fin_str}")
+            print(f"   🌡️  {config['temp_min']:.1f}°C - {config['temp_max']:.1f}°C")
+            print(f"   💧 {config['hum_min']:.1f}% - {config['hum_max']:.1f}%")
             
-            # Generar 200 muestras positivas
-            for _ in range(200):
-                temp = np.random.uniform(config['temp_min'], config['temp_max'])
-                hum = np.random.uniform(config['hum_min'], config['hum_max'])
-                hora = np.random.uniform(config['hora_inicio'], config['hora_fin'])
-                
-                X.append([temp, hum, hora])
-                
-                output = [0, 0, 0, 0]
-                output[relay_index] = 1
-                y.append(output)
-            
-            print(f"   ✓ Generadas 200 muestras positivas")
+            relays_habilitados.append({
+                'index': relay_index,
+                'config': config
+            })
+    
+    if not relays_habilitados:
+        print("\n⚠️  ADVERTENCIA: No hay relays habilitados!")
+        # Dataset mínimo de seguridad
+        for _ in range(200):
+            X.append([np.random.uniform(15, 25), 
+                     np.random.uniform(60, 90), 
+                     np.random.uniform(0, 24)])
+            y.append([0, 0, 0, 0])
         
-        if relays_activos == 0:
-            print("\n⚠️  ADVERTENCIA: No hay relays habilitados!")
-            print("   Generando dataset mínimo...")
-            # Dataset mínimo de seguridad
-            for _ in range(100):
-                X.append([np.random.uniform(15, 25), np.random.uniform(60, 90), np.random.uniform(0, 24)])
-                y.append([0, 0, 0, 0])
+        print("\n📈 Dataset mínimo generado: 200 muestras OFF")
+        return np.array(X), np.array(y)
+    
+    # ========== FASE 1: MUESTRAS POSITIVAS (dentro de rangos) ==========
+    print(f"\n🟢 FASE 1: Generando muestras DENTRO de rangos configurados")
+    
+    num_muestras_positivas = 800  # Aumentado para mejor cobertura
+    
+    for _ in range(num_muestras_positivas):
+        # Seleccionar un relay al azar para generar la muestra
+        relay_ref = np.random.choice(relays_habilitados)
+        config_ref = relay_ref['config']
         
-        # Generar casos OFF (proporción balanceada)
-        num_muestras_off = max(400, relays_activos * 200)
-        print(f"\n🔴 CASOS OFF (todo apagado)")
-        print(f"   Generando {num_muestras_off} muestras negativas...")
+        # Generar valores dentro del rango del relay seleccionado
+        temp = np.random.uniform(config_ref['temp_min'], config_ref['temp_max'])
+        hum = np.random.uniform(config_ref['hum_min'], config_ref['hum_max'])
+        hora = np.random.uniform(config_ref['hora_inicio'], config_ref['hora_fin'])
         
-        for _ in range(num_muestras_off):
-            # Temperatura fuera de todos los rangos
-            temp = np.random.choice([
-                np.random.uniform(5, 14),
-                np.random.uniform(26, 40)
-            ])
+        # Añadir ruido pequeño (±5% del rango)
+        temp += np.random.uniform(-0.5, 0.5)
+        hum += np.random.uniform(-2, 2)
+        hora += np.random.uniform(-0.05, 0.05)
+        
+        # Mantener dentro de límites físicos
+        temp = np.clip(temp, -40, 80)
+        hum = np.clip(hum, 0, 100)
+        hora = hora % 24
+        
+        # ✅ EVALUAR TODOS LOS RELÉS SIMULTÁNEAMENTE
+        output = [0, 0, 0, 0]
+        for relay in relays_habilitados:
+            idx = relay['index']
+            cfg = relay['config']
             
-            hum = np.random.uniform(10, 100)
+            # Verificar TODAS las condiciones
+            temp_ok = cfg['temp_min'] <= temp <= cfg['temp_max']
+            hum_ok = cfg['hum_min'] <= hum <= cfg['hum_max']
             
-            # Hora fuera de todos los rangos configurados
-            todas_horas = []
-            for relay_key in ['relay1', 'relay2', 'relay3', 'relay4']:
-                if horarios_config[relay_key]['habilitado']:
-                    todas_horas.append(horarios_config[relay_key]['hora_inicio'])
-                    todas_horas.append(horarios_config[relay_key]['hora_fin'])
+            # Manejo de horarios que cruzan medianoche
+            if cfg['hora_inicio'] <= cfg['hora_fin']:
+                hora_ok = cfg['hora_inicio'] <= hora <= cfg['hora_fin']
+            else:  # Cruce de medianoche (ej: 23:00 - 01:00)
+                hora_ok = hora >= cfg['hora_inicio'] or hora <= cfg['hora_fin']
             
-            if todas_horas:
-                hora_min = min(todas_horas)
-                hora_max = max(todas_horas)
+            if temp_ok and hum_ok and hora_ok:
+                output[idx] = 1
+        
+        X.append([temp, hum, hora])
+        y.append(output)
+    
+    print(f"   ✓ {num_muestras_positivas} muestras generadas con evaluación multi-label")
+    
+    # ========== FASE 2: MUESTRAS EN BORDES (transiciones) ==========
+    print(f"\n🟡 FASE 2: Generando muestras en BORDES de rangos")
+    
+    num_muestras_borde = 400
+    
+    for _ in range(num_muestras_borde):
+        relay_ref = np.random.choice(relays_habilitados)
+        config_ref = relay_ref['config']
+        
+        # Generar valores en los límites (±10% del rango)
+        borde_tipo = np.random.choice(['temp_min', 'temp_max', 'hum_min', 
+                                       'hum_max', 'hora_inicio', 'hora_fin'])
+        
+        if borde_tipo == 'temp_min':
+            temp = config_ref['temp_min'] + np.random.uniform(-1, 1)
+            hum = np.random.uniform(config_ref['hum_min'], config_ref['hum_max'])
+            hora = np.random.uniform(config_ref['hora_inicio'], config_ref['hora_fin'])
+        elif borde_tipo == 'temp_max':
+            temp = config_ref['temp_max'] + np.random.uniform(-1, 1)
+            hum = np.random.uniform(config_ref['hum_min'], config_ref['hum_max'])
+            hora = np.random.uniform(config_ref['hora_inicio'], config_ref['hora_fin'])
+        elif borde_tipo == 'hum_min':
+            temp = np.random.uniform(config_ref['temp_min'], config_ref['temp_max'])
+            hum = config_ref['hum_min'] + np.random.uniform(-3, 3)
+            hora = np.random.uniform(config_ref['hora_inicio'], config_ref['hora_fin'])
+        elif borde_tipo == 'hum_max':
+            temp = np.random.uniform(config_ref['temp_min'], config_ref['temp_max'])
+            hum = config_ref['hum_max'] + np.random.uniform(-3, 3)
+            hora = np.random.uniform(config_ref['hora_inicio'], config_ref['hora_fin'])
+        elif borde_tipo == 'hora_inicio':
+            temp = np.random.uniform(config_ref['temp_min'], config_ref['temp_max'])
+            hum = np.random.uniform(config_ref['hum_min'], config_ref['hum_max'])
+            hora = config_ref['hora_inicio'] + np.random.uniform(-0.1, 0.1)
+        else:  # hora_fin
+            temp = np.random.uniform(config_ref['temp_min'], config_ref['temp_max'])
+            hum = np.random.uniform(config_ref['hum_min'], config_ref['hum_max'])
+            hora = config_ref['hora_fin'] + np.random.uniform(-0.1, 0.1)
+        
+        temp = np.clip(temp, -40, 80)
+        hum = np.clip(hum, 0, 100)
+        hora = hora % 24
+        
+        # Evaluar todos los relés
+        output = [0, 0, 0, 0]
+        for relay in relays_habilitados:
+            idx = relay['index']
+            cfg = relay['config']
+            
+            temp_ok = cfg['temp_min'] <= temp <= cfg['temp_max']
+            hum_ok = cfg['hum_min'] <= hum <= cfg['hum_max']
+            
+            if cfg['hora_inicio'] <= cfg['hora_fin']:
+                hora_ok = cfg['hora_inicio'] <= hora <= cfg['hora_fin']
+            else:
+                hora_ok = hora >= cfg['hora_inicio'] or hora <= cfg['hora_fin']
+            
+            if temp_ok and hum_ok and hora_ok:
+                output[idx] = 1
+        
+        X.append([temp, hum, hora])
+        y.append(output)
+    
+    print(f"   ✓ {num_muestras_borde} muestras en bordes generadas")
+    
+    # ========== FASE 3: MUESTRAS NEGATIVAS (fuera de rangos) ==========
+    print(f"\n🔴 FASE 3: Generando muestras FUERA de rangos (todo OFF)")
+    
+    num_muestras_negativas = 600
+    
+    for _ in range(num_muestras_negativas):
+        # Estrategia: generar valores que NO coincidan con ningún relay
+        estrategia = np.random.choice(['temp_fuera', 'hum_fuera', 'hora_fuera', 'aleatorio_total'])
+        
+        if estrategia == 'temp_fuera':
+            # Temperatura muy fuera de todos los rangos
+            temp_min_global = min(r['config']['temp_min'] for r in relays_habilitados)
+            temp_max_global = max(r['config']['temp_max'] for r in relays_habilitados)
+            
+            if np.random.random() < 0.5:
+                temp = np.random.uniform(0, temp_min_global - 2)
+            else:
+                temp = np.random.uniform(temp_max_global + 2, 50)
+            
+            hum = np.random.uniform(0, 100)
+            hora = np.random.uniform(0, 24)
+            
+        elif estrategia == 'hum_fuera':
+            temp = np.random.uniform(10, 30)
+            
+            hum_min_global = min(r['config']['hum_min'] for r in relays_habilitados)
+            hum_max_global = max(r['config']['hum_max'] for r in relays_habilitados)
+            
+            if np.random.random() < 0.5:
+                hum = np.random.uniform(0, max(0, hum_min_global - 5))
+            else:
+                hum = np.random.uniform(min(100, hum_max_global + 5), 100)
+            
+            hora = np.random.uniform(0, 24)
+            
+        elif estrategia == 'hora_fuera':
+            temp = np.random.uniform(10, 30)
+            hum = np.random.uniform(40, 90)
+            
+            # Hora fuera de todos los rangos activos
+            horas_activas = []
+            for relay in relays_habilitados:
+                cfg = relay['config']
+                if cfg['hora_inicio'] <= cfg['hora_fin']:
+                    horas_activas.extend([cfg['hora_inicio'], cfg['hora_fin']])
+            
+            if horas_activas:
+                hora_min = min(horas_activas)
+                hora_max = max(horas_activas)
                 
-                if hora_min > 1:
+                if hora_min > 1 and np.random.random() < 0.5:
                     hora = np.random.uniform(0, hora_min - 0.5)
                 elif hora_max < 23:
                     hora = np.random.uniform(hora_max + 0.5, 24)
@@ -301,21 +430,62 @@ class RedNeuronalMLP:
                     hora = np.random.uniform(0, 24)
             else:
                 hora = np.random.uniform(0, 24)
+        
+        else:  # aleatorio_total
+            temp = np.random.uniform(5, 40)
+            hum = np.random.uniform(10, 100)
+            hora = np.random.uniform(0, 24)
+        
+        # Evaluar (debe dar todo OFF)
+        output = [0, 0, 0, 0]
+        for relay in relays_habilitados:
+            idx = relay['index']
+            cfg = relay['config']
             
-            X.append([temp, hum, hora])
-            y.append([0, 0, 0, 0])
+            temp_ok = cfg['temp_min'] <= temp <= cfg['temp_max']
+            hum_ok = cfg['hum_min'] <= hum <= cfg['hum_max']
+            
+            if cfg['hora_inicio'] <= cfg['hora_fin']:
+                hora_ok = cfg['hora_inicio'] <= hora <= cfg['hora_fin']
+            else:
+                hora_ok = hora >= cfg['hora_inicio'] or hora <= cfg['hora_fin']
+            
+            if temp_ok and hum_ok and hora_ok:
+                output[idx] = 1
         
-        print(f"   ✓ {num_muestras_off} muestras OFF generadas")
-        
-        print("\n" + "="*70)
-        print(f"📈 RESUMEN DEL DATASET:")
-        print(f"   Total muestras: {len(X)}")
-        print(f"   Muestras ON: {int(np.sum(y))}")
-        print(f"   Muestras OFF: {len(X) - int(np.sum(y))}")
-        print(f"   Relays activos: {relays_activos}")
-        print("="*70 + "\n")
-        
-        return np.array(X), np.array(y)
+        X.append([temp, hum, hora])
+        y.append(output)
+    
+    print(f"   ✓ {num_muestras_negativas} muestras negativas generadas")
+    
+    # ========== ESTADÍSTICAS FINALES ==========
+    X = np.array(X)
+    y = np.array(y)
+    
+    total_muestras = len(X)
+    muestras_off = np.sum(np.all(y == 0, axis=1))
+    muestras_on = total_muestras - muestras_off
+    
+    # Contar activaciones simultáneas
+    activaciones_simultaneas = np.sum(y, axis=1)
+    max_simultaneas = int(np.max(activaciones_simultaneas))
+    
+    print("\n" + "="*70)
+    print("📈 RESUMEN DEL DATASET MULTI-LABEL:")
+    print("="*70)
+    print(f"   Total muestras: {total_muestras}")
+    print(f"   Muestras con al menos 1 ON: {muestras_on}")
+    print(f"   Muestras todo OFF: {muestras_off}")
+    print(f"   Relays habilitados: {len(relays_habilitados)}")
+    print(f"   Max activaciones simultáneas: {max_simultaneas}")
+    print(f"\n   Distribución por Relay:")
+    for i in range(4):
+        activaciones = np.sum(y[:, i])
+        porcentaje = (activaciones / total_muestras) * 100
+        print(f"      Relay {i+1}: {int(activaciones)} activaciones ({porcentaje:.1f}%)")
+    print("="*70 + "\n")
+    
+    return X, y
 
     def entrenar(self):
         try:
